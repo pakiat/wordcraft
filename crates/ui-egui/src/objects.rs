@@ -584,8 +584,10 @@ pub fn paint(app: &WordApp, painter: &Painter, t: &Tokens, layout: &DocLayout, p
         paint_end_drag(app, d, painter, t, layout, pages, scale);
         return;
     }
-    if let Some((o, a, b)) = connector_ends(app, layout) {
-        // A connector or line: a handle at each end (filled when glued).
+    // A connector or line: a handle at each end (filled when glued). While it is dragged by its
+    // body, the drag preview below shows instead (the page leaves it out meanwhile).
+    let body_drag = app.canvas.obj_drag.as_ref().is_some_and(|d| d.drag.moved);
+    if !body_drag && let Some((o, a, b)) = connector_ends(app, layout) {
         let glued = match selected(app) {
             Some((_, InlineObject::Shape { extra, .. })) => (extra.start.is_some(), extra.end.is_some()),
             _ => (false, false),
@@ -984,6 +986,21 @@ mod tests {
                 h.step();
             }
             assert_eq!(h.state().canvas.obj_drag.as_ref().map(|d| d.drag.grab), Some(Grab::Move), "flip_v {flip_v}: the middle moves it");
+            // While it moves, it shows where the pointer has it (the page leaves it out
+            // meanwhile), not only as its end handles back where it was: something is drawn along
+            // the line's new place, between its ends.
+            h.step();
+            let img = h.render().unwrap();
+            let ppp = h.ctx.pixels_per_point();
+            let (x0, x1) = (((end.x - 100.0) * ppp) as u32, ((end.x + 100.0) * ppp) as u32);
+            let (y0, y1) = (((end.y - 3.0) * ppp) as u32, ((end.y + 3.0) * ppp) as u32);
+            let pointer = Rect::from_min_size(end - egui::vec2(2.0, 2.0), egui::vec2(20.0, 26.0));
+            let drawn = (y0..y1)
+                .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+                .filter(|&(x, y)| !pointer.contains(egui::pos2(x as f32 / ppp, y as f32 / ppp)))
+                .filter(|&(x, y)| img.get_pixel(x, y).0[..3].iter().any(|c| *c < 200))
+                .count();
+            assert!(drawn > 50, "flip_v {flip_v}: the dragged line shows at its new place ({drawn} pixels)");
             button(&h, end, false);
             steps(&mut h, 3);
             let n = h.state_mut().session.layout().object(&Pos::body(0, 0), 0).unwrap().rect;
