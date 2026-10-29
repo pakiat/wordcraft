@@ -74,11 +74,15 @@ pub(super) fn char_style_has_cs(styles: &StyleSheet, c: &CharProps) -> bool {
 }
 
 /// Mark `c`, and a tracked formatting change's "before" copy (so the change lists nothing the
-/// author didn't do), complex script.
-fn mark_cs(c: &mut CharProps) {
+/// author didn't do), complex script. The "before" copy is left alone when it says `w:cs` or
+/// `inherits_cs` says its styles do: rejecting the change then restores what they gave.
+fn mark_cs(c: &mut CharProps, inherits_cs: &impl Fn(&CharProps) -> bool) {
     c.cs = Some(true);
-    if let Some(ch) = c.fmt_change.as_mut() {
-        ch.old.cs.get_or_insert(true);
+    if let Some(ch) = c.fmt_change.as_mut()
+        && ch.old.cs.is_none()
+        && !inherits_cs(&ch.old)
+    {
+        ch.old.cs = Some(true);
     }
 }
 
@@ -119,7 +123,7 @@ pub(super) fn complex_spans<'a>(
             let r = start..cut.get(k + 1).map_or(range.end, |c| c.0);
             if cs {
                 let mut p = props.clone().into_owned();
-                mark_cs(&mut p);
+                mark_cs(&mut p, &inherits_cs);
                 out.push((r, Cow::Owned(p)));
             } else {
                 out.push((r, props.clone()));
@@ -188,6 +192,23 @@ mod tests {
         let plain = CharProps::default();
         let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&plain))], |_| true);
         assert_eq!((out.len(), out[0].1.cs), (1, None), "a style says it");
+    }
+
+    #[test]
+    fn a_tracked_change_keeps_the_flag_its_old_style_gives() {
+        // The run's character style changed from one that says `w:cs` to one that doesn't: the
+        // run is marked, the "before" copy keeps its style's value.
+        let text = "ไทย";
+        let old = CharProps { style: Some("SaysCs".into()), ..CharProps::default() };
+        let p = CharProps { style: Some("Plain".into()), fmt_change: wordcraft_doc::props::PropChange::boxed(0, old), ..CharProps::default() };
+        let styled = |c: &CharProps| c.style.as_deref() == Some("SaysCs");
+        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], styled);
+        assert_eq!(out[0].1.cs, Some(true));
+        assert_eq!(out[0].1.fmt_change.as_ref().unwrap().old.cs, None);
+        // Without a style that says it, the "before" copy is marked too.
+        let p = CharProps { fmt_change: wordcraft_doc::props::PropChange::boxed(0, CharProps::default()), ..CharProps::default() };
+        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], |_| false);
+        assert_eq!(out[0].1.fmt_change.as_ref().unwrap().old.cs, Some(true));
     }
 
     #[test]
