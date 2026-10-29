@@ -282,14 +282,16 @@ fn resolved(s: &Session) -> Vec<ResolvedChar> {
     out
 }
 
-/// Bold as drawn: a run marked complex script (`w:cs`) shows its complex-script bold.
+/// Bold as drawn: a run marked complex script (`w:cs`) or right to left (`w:rtl`) shows its
+/// complex-script bold.
 fn shown_bold(r: &ResolvedChar) -> bool {
-    if r.cs { r.bold_cs } else { r.bold }
+    if r.cs || r.rtl { r.bold_cs } else { r.bold }
 }
 
-/// Italic as drawn: a run marked complex script (`w:cs`) shows its complex-script italic.
+/// Italic as drawn: a run marked complex script (`w:cs`) or right to left (`w:rtl`) shows its
+/// complex-script italic.
 fn shown_italic(r: &ResolvedChar) -> bool {
-    if r.cs { r.italic_cs } else { r.italic }
+    if r.cs || r.rtl { r.italic_cs } else { r.italic }
 }
 
 fn toggle(s: &mut Session, v: &Value, get: fn(&ResolvedChar) -> bool, set: fn(&mut CharProps, bool)) -> CmdResult {

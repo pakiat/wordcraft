@@ -173,6 +173,21 @@ fn bold_and_italic_buttons_follow_what_a_complex_script_run_shows() {
     assert_eq!((c.bold_cs, c.italic_cs), (Some(true), Some(true)));
     let state = run(&mut s, "format.state", json!({}));
     assert_eq!((state["bold"].as_bool(), state["italic"].as_bool()), (Some(true), Some(true)));
+
+    // A right-to-left run is drawn with its complex-script values too.
+    let mut s = session("שלום", true);
+    let p = s.doc.para_mut(StoryRef::Body, &wordcraft_doc::Path::top(0)).unwrap();
+    for r in &mut p.runs {
+        (r.props.rtl, r.props.bold, r.props.bold_cs, r.props.italic, r.props.italic_cs) =
+            (Some(true), Some(true), Some(false), Some(true), Some(false));
+    }
+    run(&mut s, "select.all", json!({}));
+    let state = run(&mut s, "format.state", json!({}));
+    assert_eq!((state["bold"].as_bool(), state["italic"].as_bool()), (Some(false), Some(false)));
+    run(&mut s, "format.bold", json!({}));
+    run(&mut s, "format.italic", json!({}));
+    let c = s.doc.para(StoryRef::Body, &wordcraft_doc::Path::top(0)).unwrap().props_of_char(0).clone();
+    assert_eq!((c.bold, c.bold_cs, c.italic, c.italic_cs), (Some(true), Some(true), Some(true), Some(true)));
 }
 
 #[test]
