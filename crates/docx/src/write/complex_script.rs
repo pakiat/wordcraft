@@ -8,12 +8,17 @@
 //! and other punctuation and spaces go with the text before them. A run that doesn't say `w:cs`,
 //! in a paragraph with Thai, is therefore split the same way and its Thai pieces are written
 //! `w:cs`. Runs that say it, or whose styles do, are written as they are.
+//!
+//! Word draws a `w:cs` run with the complex-script font, size, bold and italic only (`w:rFonts
+//! w:cs`, `w:szCs`, `w:bCs`, `w:iCs`; 10 pt when no `w:szCs` is set anywhere), while it draws
+//! unmarked Thai with the ordinary ones. A marked piece therefore also gets the values WordCraft
+//! drew it with wherever its styles set no complex-script value, so it looks the same in Word.
 
 use std::borrow::Cow;
 use std::ops::Range;
 
 use wordcraft_doc::props::CharProps;
-use wordcraft_doc::styles::StyleSheet;
+use wordcraft_doc::styles::{StyleKind, StyleSheet};
 
 /// A Thai letter, mark or digit?
 fn is_thai(c: char) -> bool {
@@ -62,37 +67,55 @@ fn marks(text: &str) -> Vec<(usize, bool)> {
     out
 }
 
-/// Does a paragraph of style `para_style` inherit `w:cs` from the document defaults or its
-/// style chain? (Resolved once per paragraph.)
-pub(super) fn para_inherits_cs(styles: &StyleSheet, para_style: Option<&str>) -> bool {
-    styles.para_style_props(para_style.unwrap_or("Normal")).1.cs.is_some()
+/// The run formatting a paragraph of style `para_style` gives its runs: the document defaults
+/// and the paragraph style chain. (Resolved once per paragraph.)
+pub(super) fn para_props(styles: &StyleSheet, para_style: Option<&str>) -> CharProps {
+    styles.para_style_props(para_style.unwrap_or("Normal")).1
 }
 
-/// Does `c`'s character style chain say `w:cs`?
-pub(super) fn char_style_has_cs(styles: &StyleSheet, c: &CharProps) -> bool {
-    c.style.as_deref().is_some_and(|s| styles.chain(s).iter().any(|st| st.chr.cs.is_some()))
+/// `c` over `para` (from [`para_props`]) and its character style chain, as the resolver merges
+/// them.
+pub(super) fn merged(styles: &StyleSheet, para: &CharProps, c: &CharProps) -> CharProps {
+    let mut m = para.clone();
+    if let Some(s) = c.style.as_deref() {
+        for st in styles.chain(s).iter().filter(|st| matches!(st.kind, StyleKind::Character | StyleKind::Paragraph)) {
+            m.overlay(&st.chr);
+        }
+    }
+    m.overlay(&CharProps { style: None, ..c.clone() });
+    m
 }
 
-/// Mark `c`, and a tracked formatting change's "before" copy (so the change lists nothing the
-/// author didn't do), complex script. The "before" copy is left alone when it says `w:cs` or
-/// `inherits_cs` says its styles do: rejecting the change then restores what they gave.
-fn mark_cs(c: &mut CharProps, inherits_cs: &impl Fn(&CharProps) -> bool) {
+/// Mark `c` complex script, keeping its text as it was drawn. Word draws a `w:cs` run with the
+/// complex-script font, size, bold and italic alone, and WordCraft drew the unmarked Thai with
+/// the ordinary ones where `m` (what `c`'s styles and own formatting give it) has no
+/// complex-script value: those are written as complex-script values.
+fn mark_cs(c: &mut CharProps, m: &CharProps) {
     c.cs = Some(true);
-    if let Some(ch) = c.fmt_change.as_mut()
-        && ch.old.cs.is_none()
-        && !inherits_cs(&ch.old)
-    {
-        ch.old.cs = Some(true);
+    if m.font_cs.is_none() {
+        c.font_cs = m.font.clone();
+    }
+    if m.size_cs.is_none() {
+        c.size_cs = Some(m.size.unwrap_or(wordcraft_doc::props::DEFAULT_FONT_SIZE));
+    }
+    if m.bold_cs.is_none() && m.bold == Some(true) {
+        c.bold_cs = Some(true);
+    }
+    if m.italic_cs.is_none() && m.italic == Some(true) {
+        c.italic_cs = Some(true);
     }
 }
 
 /// `spans` (byte ranges of `text` with their props) with the runs that don't say `w:cs` split
-/// where Word's typed marking changes; the Thai pieces get `cs: Some(true)`. Right-to-left runs,
-/// and runs for which `inherits_cs` says a style gives the flag, pass through.
+/// where Word's typed marking changes; the Thai pieces are marked by [`mark_cs`], and so is a
+/// tracked formatting change's "before" copy (so the change lists nothing the author didn't do)
+/// unless it or its styles already say `w:cs` (rejecting the change then restores what they
+/// gave). Right-to-left runs, and runs whose styles say `w:cs`, pass through. `merged` gives a
+/// run's props over its styles ([`merged`]).
 pub(super) fn complex_spans<'a>(
     text: &str,
     spans: Vec<(Range<usize>, Cow<'a, CharProps>)>,
-    inherits_cs: impl Fn(&CharProps) -> bool,
+    merged: impl Fn(&CharProps) -> CharProps,
 ) -> Vec<(Range<usize>, Cow<'a, CharProps>)> {
     if !text.chars().any(is_thai) {
         return spans;
@@ -101,7 +124,8 @@ pub(super) fn complex_spans<'a>(
     let mark_at = |at: usize| marks.binary_search_by_key(&at, |m| m.0).ok().and_then(|k| marks.get(k)).is_some_and(|m| m.1);
     let mut out = Vec::with_capacity(spans.len());
     for (range, props) in spans {
-        let open = props.cs.is_none() && props.rtl != Some(true) && !inherits_cs(&props);
+        let m = merged(&props);
+        let open = m.cs.is_none() && m.rtl != Some(true);
         let Some(run) = text.get(range.clone()).filter(|_| open) else {
             out.push((range, props));
             continue;
@@ -123,7 +147,13 @@ pub(super) fn complex_spans<'a>(
             let r = start..cut.get(k + 1).map_or(range.end, |c| c.0);
             if cs {
                 let mut p = props.clone().into_owned();
-                mark_cs(&mut p, &inherits_cs);
+                mark_cs(&mut p, &m);
+                if let Some(ch) = p.fmt_change.as_mut() {
+                    let old = merged(&ch.old);
+                    if old.cs.is_none() {
+                        mark_cs(&mut ch.old, &old);
+                    }
+                }
                 out.push((r, Cow::Owned(p)));
             } else {
                 out.push((r, props.clone()));
@@ -140,7 +170,7 @@ mod tests {
     /// `text` split by [`complex_spans`] as one plain run, written `[cs]{not}` like the probe.
     fn split(text: &str) -> String {
         let p = CharProps::default();
-        let spans = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], |_| false);
+        let spans = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], CharProps::clone);
         spans
             .iter()
             .map(|(r, c)| {
@@ -180,17 +210,17 @@ mod tests {
     fn runs_that_say_cs_or_have_no_thai_are_unchanged() {
         let text = "English only 2026";
         let p = CharProps::default();
-        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], |_| false);
+        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], CharProps::clone);
         assert!(matches!(out.as_slice(), [(r, Cow::Borrowed(_))] if *r == (0..text.len())));
 
         let text = "ไทย English";
         let off = CharProps { cs: Some(false), ..CharProps::default() };
-        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&off))], |_| false);
+        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&off))], CharProps::clone);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].1.cs, Some(false));
 
         let plain = CharProps::default();
-        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&plain))], |_| true);
+        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&plain))], |c| CharProps { cs: Some(false), ..c.clone() });
         assert_eq!((out.len(), out[0].1.cs), (1, None), "a style says it");
     }
 
@@ -201,14 +231,40 @@ mod tests {
         let text = "ไทย";
         let old = CharProps { style: Some("SaysCs".into()), ..CharProps::default() };
         let p = CharProps { style: Some("Plain".into()), fmt_change: wordcraft_doc::props::PropChange::boxed(0, old), ..CharProps::default() };
-        let styled = |c: &CharProps| c.style.as_deref() == Some("SaysCs");
+        let styled = |c: &CharProps| CharProps { cs: (c.style.as_deref() == Some("SaysCs")).then_some(true), ..c.clone() };
         let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], styled);
         assert_eq!(out[0].1.cs, Some(true));
         assert_eq!(out[0].1.fmt_change.as_ref().unwrap().old.cs, None);
         // Without a style that says it, the "before" copy is marked too.
         let p = CharProps { fmt_change: wordcraft_doc::props::PropChange::boxed(0, CharProps::default()), ..CharProps::default() };
-        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], |_| false);
+        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], CharProps::clone);
         assert_eq!(out[0].1.fmt_change.as_ref().unwrap().old.cs, Some(true));
+    }
+
+    #[test]
+    fn marked_pieces_keep_the_font_size_bold_and_italic_they_were_drawn_with() {
+        // Word draws a `w:cs` run with the complex-script values alone (10 pt without `w:szCs`):
+        // the ordinary ones are written as complex-script values where the styles set none.
+        let text = "ไทย ABC";
+        let p = CharProps { font: Some("Leelawadee UI".into()), size: Some(16.0), bold: Some(true), italic: Some(true), ..CharProps::default() };
+        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], CharProps::clone);
+        let c = &out[0].1;
+        assert_eq!(
+            (c.cs, c.font_cs.as_deref(), c.size_cs, c.bold_cs, c.italic_cs),
+            (Some(true), Some("Leelawadee UI"), Some(16.0), Some(true), Some(true))
+        );
+        assert_eq!((out[1].1.font_cs.as_deref(), out[1].1.size_cs), (None, None), "the Latin piece is left as it was");
+        // Complex-script values the styles give are kept, not overwritten.
+        let styled = |c: &CharProps| CharProps {
+            font_cs: Some("TH SarabunPSK".into()),
+            size_cs: Some(18.0),
+            bold_cs: Some(false),
+            italic_cs: Some(false),
+            ..c.clone()
+        };
+        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], styled);
+        let c = &out[0].1;
+        assert_eq!((c.font_cs.as_deref(), c.size_cs, c.bold_cs, c.italic_cs), (None, None, None, None));
     }
 
     #[test]
@@ -221,7 +277,7 @@ mod tests {
             (usize::MAX - 1..usize::MAX, Cow::Borrowed(&p)),
             (2..text.len(), Cow::Borrowed(&p)),
         ];
-        let out = complex_spans(text, spans, |_| false);
+        let out = complex_spans(text, spans, CharProps::clone);
         assert!(out.len() >= 4);
     }
 }
