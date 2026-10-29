@@ -109,8 +109,8 @@ fn mark_cs(c: &mut CharProps, m: &CharProps) {
 /// `spans` (byte ranges of `text` with their props) with the runs that don't say `w:cs` split
 /// where Word's typed marking changes; the Thai pieces are marked by [`mark_cs`], and so is a
 /// tracked formatting change's "before" copy (so the change lists nothing the author didn't do)
-/// unless it or its styles already say `w:cs` (rejecting the change then restores what they
-/// gave). Right-to-left runs, and runs whose styles say `w:cs`, pass through. `merged` gives a
+/// unless it or its styles already say `w:cs` or `w:rtl` (rejecting the change then restores what
+/// they gave). Right-to-left runs, and runs whose styles say `w:cs`, pass through. `merged` gives a
 /// run's props over its styles ([`merged`]).
 pub(super) fn complex_spans<'a>(
     text: &str,
@@ -150,7 +150,7 @@ pub(super) fn complex_spans<'a>(
                 mark_cs(&mut p, &m);
                 if let Some(ch) = p.fmt_change.as_mut() {
                     let old = merged(&ch.old);
-                    if old.cs.is_none() {
+                    if old.cs.is_none() && old.rtl != Some(true) {
                         mark_cs(&mut ch.old, &old);
                     }
                 }
@@ -235,6 +235,12 @@ mod tests {
         let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], styled);
         assert_eq!(out[0].1.cs, Some(true));
         assert_eq!(out[0].1.fmt_change.as_ref().unwrap().old.cs, None);
+        // A right-to-left "before" copy is left as it was too.
+        let rtl = CharProps { rtl: Some(true), ..CharProps::default() };
+        let p = CharProps { rtl: Some(false), fmt_change: wordcraft_doc::props::PropChange::boxed(0, rtl.clone()), ..CharProps::default() };
+        let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], CharProps::clone);
+        assert_eq!(out[0].1.cs, Some(true));
+        assert_eq!(out[0].1.fmt_change.as_ref().unwrap().old, rtl);
         // Without a style that says it, the "before" copy is marked too.
         let p = CharProps { fmt_change: wordcraft_doc::props::PropChange::boxed(0, CharProps::default()), ..CharProps::default() };
         let out = complex_spans(text, vec![(0..text.len(), Cow::Borrowed(&p))], CharProps::clone);
