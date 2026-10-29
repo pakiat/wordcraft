@@ -175,3 +175,35 @@ fn rtl_tables_and_sections_round_trip() {
     assert_eq!(again, vec![true, false]);
     assert!(r.last_section.rtl && r.last_section.columns.count == 2);
 }
+
+/// Each run of `p` as (text, `w:cs`).
+fn run_cs(p: &Paragraph) -> Vec<(&str, Option<bool>)> {
+    p.run_ranges().map(|(r, c)| (&p.text[r], c.cs)).collect()
+}
+
+#[test]
+fn thai_pieces_are_written_complex_script() {
+    // Word breaks Thai by word only in `w:cs` runs, and marks typed Thai that way; a Latin name
+    // and Western digits stay outside them.
+    let text = "ประชุม WordCraft วันที่ 29 ตุลาคม";
+    let font = CharProps { font: Some("TH Sarabun New".into()), ..Default::default() };
+    let mut d = Document::new();
+    d.body = vec![para_block(Paragraph::with_text(text, font.clone()))];
+    let r = wordcraft_docx::read(&wordcraft_docx::write(&d).unwrap()).unwrap();
+    let ps = paras(&r);
+    assert_eq!(ps[0].text, text);
+    assert_eq!(run_cs(ps[0]), vec![("ประชุม ", Some(true)), ("WordCraft ", None), ("วันที่ ", Some(true)), ("29 ", None), ("ตุลาคม", Some(true))]);
+    assert!(ps[0].runs.iter().all(|run| run.props.font == font.font), "only the flag differs");
+
+    // A file whose Thai runs don't say it (as WPS writes them) gets it when saved.
+    let wps = docx(r#"<w:p><w:r><w:rPr><w:rFonts w:cs="TH SarabunPSK"/><w:lang w:bidi="th-TH"/></w:rPr><w:t>ตามที่ได้แจ้งไว้</w:t></w:r></w:p>"#);
+    let read = wordcraft_docx::read(&wps).unwrap();
+    assert_eq!(paras(&read)[0].runs[0].props.cs, None);
+    let xml = document_xml(&wordcraft_docx::write(&read).unwrap());
+    assert_eq!(xml.matches("<w:cs/>").count(), 1, "{xml}");
+
+    // A run that says `w:cs="0"` keeps it.
+    let off = docx(r#"<w:p><w:r><w:rPr><w:cs w:val="0"/></w:rPr><w:t>ไทย</w:t></w:r></w:p>"#);
+    let xml = document_xml(&wordcraft_docx::write(&wordcraft_docx::read(&off).unwrap()).unwrap());
+    assert!(!xml.contains("<w:cs/>"), "{xml}");
+}

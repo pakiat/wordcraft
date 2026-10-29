@@ -143,6 +143,10 @@ impl Writer<'_> {
         let spans = crate::write::bidi::direction_spans(&p.text, rtl_para, p.run_ranges(), |c| {
             para_lang || crate::write::bidi::char_style_has_lang_bidi(styles, c)
         });
+        // Thai pieces are marked complex script so Word breaks their lines by word too.
+        let para_cs = crate::write::complex_script::para_inherits_cs(styles, para_style);
+        let spans =
+            crate::write::complex_script::complex_spans(&p.text, spans, |c| para_cs || crate::write::complex_script::char_style_has_cs(styles, c));
         for (range, props) in &spans {
             let props: &CharProps = props;
             let range = range.clone();
