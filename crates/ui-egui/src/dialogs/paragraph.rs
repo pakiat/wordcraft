@@ -122,8 +122,13 @@ pub(super) fn para_special(ui: &mut Ui, first: &mut f32, mixed: &mut BTreeSet<St
         let mut none = 0.0;
         ui.add_enabled(false, egui::DragValue::new(&mut none).measure_blank(unit)).labelled_by(by_label.id);
     } else {
+        // Typed values count once committed: the 0 of "0.25" would otherwise turn Special
+        // to (none) and disable the box mid-typing.
         let mut by = first.abs();
-        para_number(ui, &mut by, ParaNumber::Length, "indentFirst", mixed, &by_label);
+        let field = egui::DragValue::new(&mut by).speed(3.6 / unit.pt_per_unit()).max_decimals(2).update_while_editing(false).measure(unit);
+        if ui.add(field).labelled_by(by_label.id).changed() {
+            mixed.remove("indentFirst");
+        }
         *first = if kind == 2 { -by.abs() } else { by.abs() };
     }
 }

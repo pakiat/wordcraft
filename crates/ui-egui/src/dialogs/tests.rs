@@ -588,10 +588,10 @@ fn paragraph_dialog_keeps_fixed_line_spacing() {
 
 /// The Paragraph dialog's Special box, as in Word: (none), First line or Hanging, By how much.
 /// Hanging is a first-line indent below 0; picking a kind from (none) starts at half an inch,
-/// and switching between First line and Hanging keeps By.
+/// switching between First line and Hanging keeps By, and a By typed in counts once committed.
 #[test]
 fn paragraph_dialog_sets_first_line_and_hanging_indents() {
-    use egui_kittest::kittest::Queryable;
+    use egui_kittest::kittest::{NodeT, Queryable};
     let mut app = app_with("Some text");
     app.dialog = Dialog::open("paragraph", &mut app);
     let mut h = egui_kittest::Harness::builder().with_size(vec2(1440.0, 900.0)).build_ui_state(
@@ -615,30 +615,43 @@ fn paragraph_dialog_sets_first_line_and_hanging_indents() {
     for _ in 0..4 {
         h.step();
     }
+    let ok = |h: &mut egui_kittest::Harness<'_, WordApp>| {
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "OK").click();
+        h.run_steps(2);
+        assert!(h.state().dialog.is_none(), "OK closes the dialog");
+    };
+    h.run_steps(4);
     pick(&mut h, "Hanging");
     assert_eq!(first(&h), -0.5, "Hanging starts at half an inch");
-    if let Some(Dialog::Paragraph { first, .. }) = &mut h.state_mut().dialog {
-        *first = -0.75;
+    // Typing 0.75 over By: the leading 0 doesn't turn Special to (none) on the way. The box,
+    // not its label: the one "By:" node that isn't a label.
+    fn by_box<'h>(h: &'h egui_kittest::Harness<'_, WordApp>) -> egui_kittest::Node<'h> {
+        h.get_all_by_label("By:").find(|n| n.accesskit_node().role() != egui::accesskit::Role::Label).expect("the By box")
     }
-    h.step();
+    by_box(&h).click();
+    h.run_steps(2);
+    by_box(&h).type_text("0");
+    h.run_steps(2);
+    assert_eq!(first(&h), -0.5, "a value still being typed doesn't count yet");
+    by_box(&h).type_text(".75");
+    // Tab moves on and commits it (Enter would also press OK, as in Word).
+    h.key_press(egui::Key::Tab);
+    h.run_steps(2);
+    assert_eq!(first(&h), -0.75, "the typed By counts once committed");
     pick(&mut h, "First line");
     assert_eq!(first(&h), 0.75, "switching kinds keeps By");
     pick(&mut h, "Hanging");
-    h.get_by_role_and_label(egui::accesskit::Role::Button, "OK").click();
-    for _ in 0..2 {
-        h.step();
-    }
-    assert!(h.state().dialog.is_none(), "OK closes the dialog");
+    ok(&mut h);
     assert_eq!(props(h.state()).indent_first, Some(-54.0), "a hanging indent of 0.75\"");
     // Opened again, it shows Hanging by 0.75"; (none) takes the indent away.
     let app = h.state_mut();
-    let Some(Dialog::Paragraph { first, .. }) = Dialog::open("paragraph", app) else { panic!() };
-    assert_eq!(first, -0.75);
-    ok_edit(app, |d| {
-        if let Dialog::Paragraph { first, .. } = d {
-            *first = 0.0;
-        }
-    });
+    let d = Dialog::open("paragraph", app);
+    app.dialog = d;
+    h.run_steps(4);
+    assert_eq!(first(&h), -0.75);
+    pick(&mut h, "(none)");
+    assert_eq!(first(&h), 0.0);
+    ok(&mut h);
     assert_eq!(props(h.state()).indent_first, Some(0.0));
 }
 
