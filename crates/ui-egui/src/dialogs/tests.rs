@@ -655,6 +655,56 @@ fn paragraph_dialog_sets_first_line_and_hanging_indents() {
     assert_eq!(props(h.state()).indent_first, Some(0.0));
 }
 
+/// Selected paragraphs with different first-line indents: Special and By show blank, an
+/// unchanged OK leaves each indent as it was, and picking a kind starts By at half an inch for
+/// all of them.
+#[test]
+fn paragraph_dialog_special_box_over_differing_first_line_indents() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let mut app = app_with("One\nTwo\nThree");
+    let _ = app.run("caret.docStart", json!({}));
+    let _ = app.run("para.set", json!({"props": {"indentLeft": 36, "indentFirst": 18}}));
+    let _ = app.run("caret.down", json!({}));
+    let _ = app.run("para.set", json!({"props": {"indentLeft": 36, "indentFirst": -18}}));
+    let _ = app.run("select.all", json!({}));
+    let was: Vec<_> = (0..3).map(|i| para_props(&app, i).indent_first).collect();
+    assert_eq!(was, [Some(18.0), Some(-18.0), None]);
+    app.dialog = Dialog::open("paragraph", &mut app);
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1440.0, 900.0)).build_ui_state(
+        |ui, app: &mut WordApp| {
+            let ctx = ui.ctx().clone();
+            app.logic(&ctx);
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(4);
+    let ok = |h: &mut egui_kittest::Harness<'_, WordApp>| {
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "OK").click();
+        h.run_steps(2);
+        assert!(h.state().dialog.is_none(), "OK closes the dialog");
+    };
+    let Some(Dialog::Paragraph { mixed, .. }) = &h.state().dialog else { panic!("no paragraph dialog") };
+    assert!(mixed.contains("indentFirst"), "{mixed:?}");
+    let special = h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Special:");
+    assert_eq!(special.accesskit_node().value().as_deref(), Some(""), "Special shows blank");
+    ok(&mut h);
+    assert_eq!((0..3).map(|i| para_props(h.state(), i).indent_first).collect::<Vec<_>>(), was, "an unchanged OK keeps each indent");
+    // Hanging from the blank box: half an inch for every selected paragraph.
+    let app = h.state_mut();
+    let d = Dialog::open("paragraph", app);
+    app.dialog = d;
+    h.run_steps(4);
+    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Special:").click();
+    h.run_steps(4);
+    h.get_by_label("Hanging").click();
+    h.run_steps(4);
+    let Some(Dialog::Paragraph { first, mixed, .. }) = &h.state().dialog else { panic!("no paragraph dialog") };
+    assert_eq!((*first, mixed.contains("indentFirst")), (-0.5, false));
+    ok(&mut h);
+    assert_eq!((0..3).map(|i| para_props(h.state(), i).indent_first).collect::<Vec<_>>(), [Some(-36.0); 3]);
+}
+
 #[test]
 fn font_dialog_sets_the_asian_and_latin_fonts_separately() {
     // #505: the Asian text font box and the Latin text font box each set their own font, and
