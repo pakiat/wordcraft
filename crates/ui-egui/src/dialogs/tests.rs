@@ -586,6 +586,62 @@ fn paragraph_dialog_keeps_fixed_line_spacing() {
     assert_eq!(props(&app).line_spacing, Some(LineSpacing::Multiple(1.5)));
 }
 
+/// The Paragraph dialog's Special box, as in Word: (none), First line or Hanging, By how much.
+/// Hanging is a first-line indent below 0; picking a kind from (none) starts at half an inch,
+/// and switching between First line and Hanging keeps By.
+#[test]
+fn paragraph_dialog_sets_first_line_and_hanging_indents() {
+    use egui_kittest::kittest::Queryable;
+    let mut app = app_with("Some text");
+    app.dialog = Dialog::open("paragraph", &mut app);
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1440.0, 900.0)).build_ui_state(
+        |ui, app: &mut WordApp| {
+            let ctx = ui.ctx().clone();
+            app.logic(&ctx);
+            app.ui(ui);
+        },
+        app,
+    );
+    let pick = |h: &mut egui_kittest::Harness<'_, WordApp>, kind: &str| {
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Special:").click();
+        h.run_steps(4);
+        h.get_by_label(kind).click();
+        h.run_steps(4);
+    };
+    let first = |h: &egui_kittest::Harness<'_, WordApp>| match &h.state().dialog {
+        Some(Dialog::Paragraph { first, .. }) => *first,
+        _ => panic!("no paragraph dialog"),
+    };
+    for _ in 0..4 {
+        h.step();
+    }
+    pick(&mut h, "Hanging");
+    assert_eq!(first(&h), -0.5, "Hanging starts at half an inch");
+    if let Some(Dialog::Paragraph { first, .. }) = &mut h.state_mut().dialog {
+        *first = -0.75;
+    }
+    h.step();
+    pick(&mut h, "First line");
+    assert_eq!(first(&h), 0.75, "switching kinds keeps By");
+    pick(&mut h, "Hanging");
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "OK").click();
+    for _ in 0..2 {
+        h.step();
+    }
+    assert!(h.state().dialog.is_none(), "OK closes the dialog");
+    assert_eq!(props(h.state()).indent_first, Some(-54.0), "a hanging indent of 0.75\"");
+    // Opened again, it shows Hanging by 0.75"; (none) takes the indent away.
+    let app = h.state_mut();
+    let Some(Dialog::Paragraph { first, .. }) = Dialog::open("paragraph", app) else { panic!() };
+    assert_eq!(first, -0.75);
+    ok_edit(app, |d| {
+        if let Dialog::Paragraph { first, .. } = d {
+            *first = 0.0;
+        }
+    });
+    assert_eq!(props(h.state()).indent_first, Some(0.0));
+}
+
 #[test]
 fn font_dialog_sets_the_asian_and_latin_fonts_separately() {
     // #505: the Asian text font box and the Latin text font box each set their own font, and
