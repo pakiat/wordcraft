@@ -6,6 +6,21 @@ use super::names::{CatalogEntry, MAX_FILE_FACES, enumerate_faces};
 use super::names::{base_style, last_resort_face, make_face, norm, style_italic, style_weight};
 use super::{Arc, BezPath, FontDb, MetadataProvider};
 
+/// Drops from `cands` (the faces whose typographic family is `family`) those whose own legacy
+/// family name (name ID 1) is another family's, when some keep `family`'s name. Word finds a font
+/// by that name: TH SarabunIT๙ gives "TH SarabunPSK" as its typographic family (name ID 16), but
+/// a document asking for TH SarabunPSK gets TH SarabunPSK's file, not IT๙'s, whose digits are
+/// drawn Thai. A family's styles named after it ("Roboto Light", "Arial Nova Cond") stay.
+fn keep_own_faces<T>(cands: &mut Vec<&T>, family: &str, legacy: impl Fn(&T) -> &str) {
+    let own = |c: &&T| {
+        let name = legacy(c);
+        name.get(..family.len()).is_some_and(|p| p.eq_ignore_ascii_case(family)) && name[family.len()..].chars().next().is_none_or(|c| c == ' ')
+    };
+    if cands.iter().any(own) {
+        cands.retain(own);
+    }
+}
+
 impl FontDb {
     /// Resolve a family + style to a face, falling back to the closest style of the family, then to
     /// Source Sans 3 Regular. `family` is a typographic family ("Roboto") or a face's legacy family
@@ -70,6 +85,7 @@ impl FontDb {
         let (path, fam, style) = {
             let cat = self.read_catalog();
             let mut cands: Vec<&CatalogEntry> = cat.iter().filter(|c| c.family.eq_ignore_ascii_case(family)).collect();
+            keep_own_faces(&mut cands, family, |c| c.legacy.as_str());
             if cands.is_empty() {
                 cands = cat.iter().filter(|c| c.legacy.eq_ignore_ascii_case(family)).collect();
             }
@@ -186,6 +202,7 @@ impl FontDb {
         }
         let faces = self.read_faces();
         let mut cands: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.family.eq_ignore_ascii_case(family)).collect();
+        keep_own_faces(&mut cands, family, |f| f.legacy_family.as_str());
         if cands.is_empty() {
             // A legacy family name: choose among the faces it names (bold and italic as usual).
             cands = faces.iter().filter(|f| f.legacy_family.eq_ignore_ascii_case(family)).collect();

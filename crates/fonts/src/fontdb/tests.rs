@@ -202,6 +202,32 @@ fn faces_are_found_by_their_legacy_family_name() {
 }
 
 #[test]
+fn a_font_naming_another_family_as_its_typographic_family_is_not_that_family() {
+    // TH SarabunIT๙ gives "TH SarabunPSK" as its typographic family (name ID 16) and "TH
+    // SarabunIT๙" as its own (name ID 1). Word finds fonts by name ID 1: TH SarabunPSK is
+    // TH SarabunPSK's file whichever loaded first, and IT๙ is found by its own name.
+    let db = FontDb::with_font_dirs(vec![]);
+    db.set_system_fallback(false);
+    let face = |bytes: &'static [u8], style: &str, legacy: &str| {
+        Arc::new(make_face(FontBytes::Static(bytes), 0, "Test SansPSK".into(), style.into(), legacy.into(), Vec::new()).unwrap())
+    };
+    let impostor = face(BUNDLED[0], "Regular", "Test SansIT9");
+    let own = face(BUNDLED[1], "Regular", "Test SansPSK");
+    let light = face(BUNDLED[1], "Light", "Test SansPSK Light");
+    db.faces.write().unwrap().extend([impostor.clone(), own.clone(), light.clone()]);
+    assert_eq!(db.face("Test SansPSK", "Regular").id(), own.id());
+    assert_eq!(db.face("test sanspsk", "Regular").id(), own.id());
+    // A style named after the family stays one of its faces.
+    assert_eq!(db.face("Test SansPSK", "Light").id(), light.id());
+    assert_eq!(db.face("Test SansIT9", "Regular").id(), impostor.id());
+    // With no face of its own, the family's name still finds the only face that has it.
+    let alone = FontDb::with_font_dirs(vec![]);
+    alone.set_system_fallback(false);
+    alone.faces.write().unwrap().push(impostor.clone());
+    assert_eq!(alone.face("Test SansPSK", "Regular").id(), impostor.id());
+}
+
+#[test]
 fn a_legacy_named_instance_with_axis_settings_is_made_once() {
     let db = FontDb::with_font_dirs(vec![]);
     let a = db.face("Inter Medium", "Medium {wght:520}");
