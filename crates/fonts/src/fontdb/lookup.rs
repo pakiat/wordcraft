@@ -35,13 +35,15 @@ impl FontDb {
     /// `f`, found for `family` and `style`, unless it is a loaded claimant (see `keep_own_faces`,
     /// e.g. a user font) and the family's own faces are installed: they load and the face chosen
     /// among them is returned instead.
-    fn owner_over_claimant(&self, family: &str, style: &str, f: Arc<FontFace>) -> Arc<FontFace> {
+    pub(super) fn owner_over_claimant(&self, family: &str, style: &str, f: Arc<FontFace>) -> Arc<FontFace> {
         #[cfg(not(target_arch = "wasm32"))]
-        if is_claimant(&f, family)
-            && self.load_cataloged_owner(family)
-            && let Some(own) = self.find(family, style)
-        {
-            return own;
+        if is_claimant(&f, family) {
+            // Look again even when this load added nothing: another thread may have just loaded
+            // the family's own faces.
+            self.load_cataloged_owner(family);
+            if let Some(own) = self.find(family, style).filter(|own| !is_claimant(own, family)) {
+                return own;
+            }
         }
         #[cfg(target_arch = "wasm32")]
         let _ = (family, style);

@@ -109,6 +109,20 @@ fn an_installed_family_is_not_hidden_by_a_loaded_face_claiming_its_name() {
 }
 
 #[test]
+fn a_claimant_found_before_another_lookup_loaded_the_family_gives_way_to_it() {
+    // A lookup found the claimant, then another thread loaded the family's own faces before this
+    // one could: loading adds nothing now, and the family's own face is still chosen.
+    let dir = font_dir("claimant-race");
+    let db = FontDb::with_font_dirs(vec![dir]);
+    let own = db.face(FAMILY, "Regular");
+    assert_eq!(own.legacy_family, FAMILY);
+    let claimant =
+        Arc::new(make_face(FontBytes::Static(BUNDLED[0]), 0, FAMILY.into(), "Regular".into(), "Sysfont Other".into(), Vec::new()).unwrap());
+    db.faces.write().unwrap().push(claimant.clone());
+    assert_eq!(db.owner_over_claimant(FAMILY, "Regular", claimant).id(), own.id());
+}
+
+#[test]
 fn a_claimant_hides_the_installed_family_neither_by_localized_name_nor_in_the_preview() {
     let dir = font_dir("claimant-local");
     let claimant = || {
