@@ -270,6 +270,18 @@ impl FontDb {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn load_cataloged_owner(&self, family: &str) -> bool {
         let _loading = self.loading.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Once per family and scan: a lookup that waited here for another's load finds the faces
+        // it loaded, and a file that can't be read isn't read again on every lookup.
+        {
+            let generation = self.catalog_gen.load(Ordering::Acquire);
+            let mut tried = self.owner_tried.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if tried.0 != generation {
+                *tried = (generation, std::collections::HashSet::new());
+            }
+            if !tried.1.insert(family.to_lowercase()) {
+                return false;
+            }
+        }
         let mut paths: Vec<std::path::PathBuf> = self
             .read_catalog()
             .iter()

@@ -123,6 +123,30 @@ fn a_claimant_found_before_another_lookup_loaded_the_family_gives_way_to_it() {
 }
 
 #[test]
+fn an_unreadable_installed_family_is_tried_once_per_scan_over_a_claimant() {
+    // The installed family's files can't be read when a lookup finds a claimant: it is used, and
+    // later lookups don't read the files again until the font folders are scanned again.
+    let dir = font_dir("claimant-unreadable");
+    let db = FontDb::with_font_dirs(vec![dir.clone()]);
+    assert_eq!(db.load_system_fonts(), 2);
+    let (regular, bold) = (dir.join("Sysfont-Regular.ttf"), dir.join("Sub/Sysfont-Bold.TTF"));
+    let away = |p: &Path| p.with_extension("away");
+    for p in [&regular, &bold] {
+        std::fs::rename(p, away(p)).unwrap();
+    }
+    let claimant =
+        Arc::new(make_face(FontBytes::Static(BUNDLED[0]), 0, FAMILY.into(), "Regular".into(), "Sysfont Other".into(), Vec::new()).unwrap());
+    db.faces.write().unwrap().push(claimant.clone());
+    assert_eq!(db.face(FAMILY, "Regular").id(), claimant.id());
+    for p in [&regular, &bold] {
+        std::fs::rename(away(p), p).unwrap();
+    }
+    assert_eq!(db.face(FAMILY, "Regular").id(), claimant.id(), "not read again in the same scan");
+    assert_eq!(db.load_system_fonts(), 2);
+    assert_eq!(db.face(FAMILY, "Regular").legacy_family, FAMILY, "tried again after a rescan");
+}
+
+#[test]
 fn a_claimant_hides_the_installed_family_neither_by_localized_name_nor_in_the_preview() {
     let dir = font_dir("claimant-local");
     let claimant = || {
