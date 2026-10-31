@@ -107,6 +107,9 @@ impl FontDb {
         }
     }
 
+    /// The styles of the faces named `family`, loaded or cataloged: by typographic family (the
+    /// family's own faces only, when it has some, as [`FontDb::face`] chooses), else by legacy
+    /// family name. Each style once, Regular first, then by weight.
     fn styles_named(&self, family: &str) -> Vec<String> {
         let mut v: Vec<(bool, f32, String)> = Vec::new();
         for legacy in [false, true] {

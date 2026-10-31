@@ -204,6 +204,11 @@ impl FontDb {
         Some(f)
     }
 
+    /// The loaded face for `family` and `style`, without loading anything: among the faces of
+    /// that typographic family (its own faces only, when it has some, see `keep_own_faces`),
+    /// else those of that legacy family name, the style asked for or the nearest weight and slant;
+    /// else the face with that full or PostScript name. A style with axis settings (`{…}`) is a
+    /// variable-font instance, made on first use.
     pub(super) fn find(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
         if style.contains('{') {
             {
