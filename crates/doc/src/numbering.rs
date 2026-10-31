@@ -498,7 +498,7 @@ mod tests {
     fn a_deeper_item_first_counts_the_levels_above_it() {
         // Measured in Word: a level above that hasn't counted yet takes its first number at the
         // first deeper item, whether or not that item's text shows it.
-        let labels = |starts: [u32; 3], texts: [&str; 3], seq: &[u8]| {
+        let labels_with = |starts: [u32; 3], texts: [&str; 3], overrides: &[(u8, u32)], seq: &[u8]| {
             let mut n = Numbering::default();
             let id = n.add_list(ListKind::Legal);
             if let Some(a) = n.abstracts.first_mut() {
@@ -507,9 +507,13 @@ mod tests {
                     l.text = t.into();
                 }
             }
+            if let Some(num) = n.nums.iter_mut().find(|x| x.id == id) {
+                num.start_overrides = overrides.to_vec();
+            }
             let mut c = Counters::default();
             seq.iter().map(|lv| c.next_label(&n, id, *lv).unwrap().0).collect::<Vec<_>>()
         };
+        let labels = |starts: [u32; 3], texts: [&str; 3], seq: &[u8]| labels_with(starts, texts, &[], seq);
         let std = ["%1.", "%1.%2.", "%1.%2.%3."];
         assert_eq!(labels([1, 1, 1], std, &[1, 1, 0, 0]), ["1.1.", "1.2.", "2.", "3."]);
         assert_eq!(labels([10, 1, 1], std, &[1, 1, 1, 1, 0, 0]), ["10.1.", "10.2.", "10.3.", "10.4.", "11.", "12."]);
@@ -517,6 +521,8 @@ mod tests {
         assert_eq!(labels([1, 1, 1], std, &[2, 1, 0, 1]), ["1.1.1.", "1.2.", "2.", "2.1."]);
         assert_eq!(labels([1, 1, 1], ["%1.", "%1.%2.", "(%3)"], &[2, 1, 0]), ["(1)", "1.2.", "2."]);
         assert_eq!(labels([1, 1, 1], std, &[0, 2, 1, 0]), ["1.", "1.1.1.", "1.2.", "2."]);
+        // The num's own start for the level above counts in its place, as the level's start does.
+        assert_eq!(labels_with([1, 1, 1], std, &[(0, 10)], &[1, 1, 0]), ["10.1.", "10.2.", "11."]);
     }
 
     #[test]
