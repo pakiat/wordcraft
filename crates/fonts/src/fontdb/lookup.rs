@@ -79,7 +79,7 @@ impl FontDb {
         {
             self.load_cataloged(family);
             if let Some(f) = self.find(family, style) {
-                return f;
+                return self.owner_over_claimant(family, style, f);
             }
         }
         // A localized family name (宋体 → SimSun).
@@ -91,7 +91,7 @@ impl FontDb {
             {
                 self.load_cataloged(&en);
                 if let Some(f) = self.find(&en, style) {
-                    return f;
+                    return self.owner_over_claimant(&en, style, f);
                 }
             }
         }
