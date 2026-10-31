@@ -225,6 +225,13 @@ fn a_font_naming_another_family_as_its_typographic_family_is_not_that_family() {
     // A style named after the family stays one of its faces.
     assert_eq!(db.face("Test SansPSK", "Light").id(), light.id());
     assert_eq!(db.face("Test SansIT9", "Regular").id(), impostor.id());
+    // A variable instance made from the impostor (asked for by its own name, as `instance` keeps
+    // it) is not what the family gets: the family's own face is used instead.
+    let claimed = face(BUNDLED[0], "Regular {wght:500}", "Test SansIT9");
+    db.faces.write().unwrap().push(claimed.clone());
+    assert_ne!(db.face("Test SansPSK", "Regular {wght:500}").id(), claimed.id());
+    assert_eq!(db.face("Test SansPSK", "Regular {wght:500}").legacy_family, "Test SansPSK");
+    assert_eq!(db.face("Test SansIT9", "Regular {wght:500}").id(), claimed.id());
     // The style list offers what `face` chooses among: not the impostor's Bold.
     let styles = db.styles("Test SansPSK");
     assert!(styles.iter().any(|s| s == "Regular") && styles.iter().any(|s| s == "Light") && !styles.iter().any(|s| s == "Bold"), "{styles:?}");

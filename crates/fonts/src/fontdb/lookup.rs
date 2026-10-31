@@ -31,6 +31,16 @@ impl FontDb {
     /// found by name whatever ran before. An exact full or PostScript name selects its face.
     pub fn face(&self, family: &str, style: &str) -> Arc<FontFace> {
         if let Some(f) = self.find(family, style) {
+            // A loaded claimant (see `keep_own_faces`, e.g. a user font) doesn't hide the family's
+            // own installed faces: they load and are chosen instead.
+            #[cfg(not(target_arch = "wasm32"))]
+            if f.family.eq_ignore_ascii_case(family)
+                && !owns_name(&f.legacy_family, family)
+                && self.load_cataloged_owner(family)
+                && let Some(own) = self.find(family, style)
+            {
+                return own;
+            }
             return f;
         }
         // Look again even when this load added nothing: another thread may have just loaded it.
@@ -198,8 +208,15 @@ impl FontDb {
         if style.contains('{') {
             {
                 let faces = self.read_faces();
-                if let Some(f) = faces.iter().find(|f| f.named(family) && f.style == style) {
-                    return Some(f.clone());
+                let cached: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.named(family) && f.style == style).collect();
+                if let Some(f) = cached.iter().find(|f| owns_name(&f.legacy_family, family)) {
+                    return Some((*f).clone());
+                }
+                // A claimant's instance (see `keep_own_faces`) only when the family has no face of
+                // its own to make one from.
+                let own_base = faces.iter().any(|f| f.family.eq_ignore_ascii_case(family) && owns_name(&f.legacy_family, family));
+                if let Some(f) = cached.first().filter(|_| !own_base) {
+                    return Some((*f).clone());
                 }
             }
             return self.instance(family, style);

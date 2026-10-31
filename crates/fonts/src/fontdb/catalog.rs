@@ -258,6 +258,29 @@ impl FontDb {
             return true;
         }
         let paths = self.family_paths(family);
+        self.load_paths(paths)
+    }
+
+    /// Load the installed files of `family`'s own faces (see `keep_own_faces`) that aren't
+    /// loaded, when a face claiming the family only by its typographic name was found first.
+    /// Returns whether any face was added.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn load_cataloged_owner(&self, family: &str) -> bool {
+        let _loading = self.loading.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut paths: Vec<std::path::PathBuf> = self
+            .read_catalog()
+            .iter()
+            .filter(|c| c.family.eq_ignore_ascii_case(family) && owns_name(&c.legacy, family))
+            .map(|c| c.path.clone())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        !paths.is_empty() && self.load_paths(paths)
+    }
+
+    /// Load the font files at `paths` (see [`FontDb::add_fonts`]). Returns whether any face was added.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_paths(&self, paths: Vec<std::path::PathBuf>) -> bool {
         let files = paths.iter().filter_map(|p| std::fs::read(p).ok()).map(|b| (b, None)).collect();
         let added = self.add_fonts(files) > 0;
         // The fallback searches' index: these files are loaded fonts now.

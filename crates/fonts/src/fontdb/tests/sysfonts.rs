@@ -91,6 +91,24 @@ fn every_lookup_by_name_finds_installed_fonts_in_a_fresh_database() {
 }
 
 #[test]
+fn an_installed_family_is_not_hidden_by_a_loaded_face_claiming_its_name() {
+    // A user font whose typographic family (name ID 16) is the installed family's but whose own
+    // name (name ID 1) is another's, as TH SarabunIT๙ is TH SarabunPSK's: loaded first, it
+    // doesn't keep the installed family's own faces from loading and being chosen.
+    let dir = font_dir("claimant");
+    let db = FontDb::with_font_dirs(vec![dir]);
+    let claimant =
+        Arc::new(make_face(FontBytes::Static(BUNDLED[0]), 0, FAMILY.into(), "Regular".into(), "Sysfont Other".into(), Vec::new()).unwrap());
+    db.faces.write().unwrap().push(claimant.clone());
+    let f = db.face(FAMILY, "Regular");
+    assert_ne!(f.id(), claimant.id());
+    assert_eq!((f.family.as_str(), f.legacy_family.as_str()), (FAMILY, FAMILY));
+    assert_eq!(db.face(FAMILY, "Bold").style, "Bold");
+    // The claimant is still found by its own name.
+    assert_eq!(db.face("Sysfont Other", "Regular").id(), claimant.id());
+}
+
+#[test]
 fn the_scan_reads_collections_and_loads_fonts_only_when_used() {
     let dir = font_dir("collection");
     std::fs::remove_file(dir.join("Sysfont-Regular.ttf")).unwrap();
