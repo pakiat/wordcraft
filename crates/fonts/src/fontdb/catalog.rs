@@ -6,6 +6,24 @@ use super::names::{CatalogEntry, file_face_names, style_italic, style_weight};
 use super::names::{LocalName, MAX_FAMILY_NAME, MAX_FILE_FACES, enumerate_faces, make_face, name_language_matches};
 use super::{Arc, FontDb, HashMap};
 
+/// Adds the faces of `new` that `faces` doesn't have yet, returning how many. A face is already
+/// there when one with its family, style and legacy family name (name ID 1) is: the same font
+/// in two folders loads once, but TH SarabunIT๙, whose typographic family (name ID 16) is "TH
+/// SarabunPSK", doesn't keep TH SarabunPSK's own file out of the family.
+pub(super) fn push_new_faces(faces: &mut Vec<Arc<FontFace>>, new: Vec<Arc<FontFace>>) -> usize {
+    // Indexed: a document's fonts may add hundreds of faces to thousands (#3716).
+    let key = |f: &FontFace| (f.family.to_ascii_lowercase(), f.style.to_ascii_lowercase(), f.legacy_family.to_ascii_lowercase());
+    let mut present: std::collections::HashSet<_> = faces.iter().map(|g| key(g)).collect();
+    let mut added = 0;
+    for f in new {
+        if present.insert(key(&f)) {
+            faces.push(f);
+            added += 1;
+        }
+    }
+    added
+}
+
 impl FontDb {
     /// Family names available (loaded plus cataloged system fonts), sorted and deduplicated. Like
     /// Word's font list, this holds each face's legacy family name too ("Roboto Light", "Inter
@@ -141,17 +159,7 @@ impl FontDb {
             }
         }
         let mut faces = self.faces.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Indexed: a document's fonts may add hundreds of faces to thousands (#3716).
-        let key = |f: &FontFace| (f.family.to_ascii_lowercase(), f.style.to_ascii_lowercase());
-        let mut present: std::collections::HashSet<_> = faces.iter().map(|g| key(g)).collect();
-        let mut added = 0;
-        for f in new {
-            if present.insert(key(&f)) {
-                faces.push(f);
-                added += 1;
-            }
-        }
-        added
+        push_new_faces(&mut faces, new)
     }
 
     /// Catalog the installed fonts unless that has been done: the first caller scans the font

@@ -214,7 +214,11 @@ fn a_font_naming_another_family_as_its_typographic_family_is_not_that_family() {
     let impostor = face(BUNDLED[0], "Regular", "Test SansIT9");
     let own = face(BUNDLED[1], "Regular", "Test SansPSK");
     let light = face(BUNDLED[1], "Light", "Test SansPSK Light");
-    db.faces.write().unwrap().extend([impostor.clone(), own.clone(), light.clone()]);
+    // Loaded in that order, as the installed files sort ("C:\Users\…\THSarabunIT9-Regular.ttf"
+    // before "C:\Windows\Fonts\THSarabun.ttf"): the family's own Regular face is still added.
+    assert_eq!(catalog::push_new_faces(&mut db.faces.write().unwrap(), vec![impostor.clone(), own.clone(), light.clone()]), 3);
+    // The same face again (one font in two folders) is not.
+    assert_eq!(catalog::push_new_faces(&mut db.faces.write().unwrap(), vec![face(BUNDLED[1], "Regular", "Test SansPSK")]), 0);
     assert_eq!(db.face("Test SansPSK", "Regular").id(), own.id());
     assert_eq!(db.face("test sanspsk", "Regular").id(), own.id());
     // A style named after the family stays one of its faces.
