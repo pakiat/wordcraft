@@ -26,6 +26,55 @@ pub(crate) fn renamed_to(file: &str, family: &str) -> Vec<u8> {
     data
 }
 
+/// A bundled Source Sans 3 file made a claimant of [`FAMILY`], as TH SarabunIT๙ is of TH
+/// SarabunPSK: its typographic family (name ID 16) is [`FAMILY`] and its own family name (name
+/// ID 1) is `legacy`. The `name` table is rewritten at the end of the file.
+fn claimant_of_family(file: &str, legacy: &str) -> Vec<u8> {
+    let mut data = renamed(file);
+    let u16_at = |d: &[u8], at: usize| u16::from_be_bytes([d[at], d[at + 1]]);
+    let u32_at = |d: &[u8], at: usize| u32::from_be_bytes(d[at..at + 4].try_into().unwrap());
+    let tables = u16_at(&data, 4) as usize;
+    let dir = (0..tables).map(|r| 12 + r * 16).find(|&at| &data[at..at + 4] == b"name").expect("a name table");
+    let name = u32_at(&data, dir + 8) as usize;
+    let (count, strings) = (u16_at(&data, name + 2) as usize, name + u16_at(&data, name + 4) as usize);
+    let utf16 = |s: &str| s.encode_utf16().flat_map(u16::to_be_bytes).collect::<Vec<u8>>();
+    // (platform, encoding, language, name ID, string bytes), without typographic names.
+    let mut records: Vec<(u16, u16, u16, u16, Vec<u8>)> = (0..count)
+        .map(|i| {
+            let at = name + 6 + i * 12;
+            let field = |k: usize| u16_at(&data, at + 2 * k);
+            let (len, off) = (field(4) as usize, field(5) as usize);
+            (field(0), field(1), field(2), field(3), data[strings + off..strings + off + len].to_vec())
+        })
+        .filter(|r| r.3 != 16 && r.3 != 17)
+        .collect();
+    for r in records.iter_mut().filter(|r| r.3 == 1) {
+        r.4 = if r.0 == 1 { legacy.as_bytes().to_vec() } else { utf16(legacy) };
+    }
+    records.push((3, 1, 0x409, 16, utf16(FAMILY)));
+    records.sort_by_key(|r| (r.0, r.1, r.2, r.3));
+    let mut table = Vec::new();
+    let mut store = Vec::new();
+    table.extend_from_slice(&0u16.to_be_bytes());
+    table.extend_from_slice(&(records.len() as u16).to_be_bytes());
+    table.extend_from_slice(&((6 + 12 * records.len()) as u16).to_be_bytes());
+    for (platform, encoding, language, id, bytes) in &records {
+        for v in [*platform, *encoding, *language, *id, bytes.len() as u16, store.len() as u16] {
+            table.extend_from_slice(&v.to_be_bytes());
+        }
+        store.extend_from_slice(bytes);
+    }
+    table.extend_from_slice(&store);
+    while !data.len().is_multiple_of(4) {
+        data.push(0);
+    }
+    let at = data.len() as u32;
+    data.extend_from_slice(&table);
+    data[dir + 8..dir + 12].copy_from_slice(&at.to_be_bytes());
+    data[dir + 12..dir + 16].copy_from_slice(&(table.len() as u32).to_be_bytes());
+    data
+}
+
 /// The fonts in `faces` as one collection (TTC) file.
 pub(crate) fn collection(faces: &[Vec<u8>]) -> Vec<u8> {
     let mut out = b"ttcf".to_vec();
@@ -138,6 +187,26 @@ fn the_preview_falls_back_to_a_claimant_when_the_installed_family_cannot_be_read
     assert_eq!(paths(&db), [PathBuf::from("claimant.ttf")]);
     // Neither file exists: no preview, rather than a face the family isn't drawn in.
     assert!(db.preview_face(FAMILY).is_none());
+}
+
+#[test]
+fn the_preview_reads_an_installed_claimant_when_the_familys_own_file_cannot_be_read() {
+    // Real files: the family's own faces and a claimant (typographic family FAMILY, own name
+    // "Sysfont Othr3") are installed. The preview shows the family's own face; with its files
+    // gone, the claimant's, read from its file, as `face` then draws the family in it.
+    let dir = font_dir("claimant-preview");
+    std::fs::write(dir.join("Claimant.ttf"), claimant_of_family("SourceSans3-Regular.ttf", "Sysfont Othr3")).unwrap();
+    assert_eq!(names(&dir.join("Claimant.ttf")), [(FAMILY.to_string(), "Regular".to_string(), "Sysfont Othr3".to_string())]);
+    let db = FontDb::with_font_dirs(vec![dir.clone()]);
+    assert_eq!(db.load_system_fonts(), 3);
+    assert_eq!(db.preview_face(FAMILY).unwrap().legacy_family, FAMILY);
+    for p in [dir.join("Sysfont-Regular.ttf"), dir.join("Sub/Sysfont-Bold.TTF")] {
+        std::fs::remove_file(p).unwrap();
+    }
+    let preview = db.preview_face(FAMILY).expect("the claimant's preview");
+    assert_eq!((preview.family.as_str(), preview.legacy_family.as_str()), (FAMILY, "Sysfont Othr3"));
+    assert!(!db.is_loaded(FAMILY), "the preview loads nothing");
+    assert_eq!(db.face(FAMILY, "Regular").legacy_family, "Sysfont Othr3");
 }
 
 #[test]
