@@ -9772,6 +9772,15 @@ fn percentage_cell_widths_size_the_columns_whichever_rows_ask() {
     let mut narrow = table(0, [20.0, 5.0, 5.0, 20.0]);
     narrow.props.width = Some(360.0);
     near(starts(narrow), of(360.0));
+    // A row that starts one column in gives its percentages to the columns it covers: 10/10/40
+    // there agree with the header row's 10/10/40 over the last three columns.
+    let mut shifted = table(0, [40.0, 10.0, 10.0, 40.0]);
+    shifted.rows[1].props.grid_before = 1;
+    shifted.rows[1].cells.remove(0);
+    for (cell, p) in shifted.rows[1].cells.iter_mut().zip([10.0, 10.0, 40.0]) {
+        cell.props.width_pct = Some(p);
+    }
+    near(starts(shifted), of(468.0));
     // A column no cell sizes, percentages that disagree, a span over two columns and an absolute
     // width alongside keep the grid.
     let grid = [0.0, 107.3, 144.5, 176.45];
