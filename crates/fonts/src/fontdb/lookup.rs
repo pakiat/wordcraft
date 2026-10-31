@@ -12,13 +12,16 @@ use super::{Arc, BezPath, FontDb, MetadataProvider};
 /// a document asking for TH SarabunPSK gets TH SarabunPSK's file, not IT๙'s, whose digits are
 /// drawn Thai. A family's styles named after it ("Roboto Light", "Arial Nova Cond") stay.
 fn keep_own_faces<T>(cands: &mut Vec<&T>, family: &str, legacy: impl Fn(&T) -> &str) {
-    let own = |c: &&T| {
-        let name = legacy(c);
-        name.get(..family.len()).is_some_and(|p| p.eq_ignore_ascii_case(family)) && name[family.len()..].chars().next().is_none_or(|c| c == ' ')
-    };
+    let own = |c: &&T| owns_name(legacy(c), family);
     if cands.iter().any(own) {
         cands.retain(own);
     }
+}
+
+/// Is a face with legacy family name `legacy` one of `family`'s own: `family` itself, or a style
+/// named after it ("Roboto Light")? See `keep_own_faces`.
+pub(super) fn owns_name(legacy: &str, family: &str) -> bool {
+    legacy.get(..family.len()).is_some_and(|p| p.eq_ignore_ascii_case(family)) && legacy[family.len()..].chars().next().is_none_or(|c| c == ' ')
 }
 
 impl FontDb {
@@ -82,7 +85,7 @@ impl FontDb {
     /// database doesn't keep (see [`FontDb::preview_face`]).
     #[cfg(not(target_arch = "wasm32"))]
     fn unshared_face(&self, family: &str) -> Option<Arc<FontFace>> {
-        let (path, fam, style) = {
+        let (path, fam, style, legacy) = {
             let cat = self.read_catalog();
             let mut cands: Vec<&CatalogEntry> = cat.iter().filter(|c| c.family.eq_ignore_ascii_case(family)).collect();
             keep_own_faces(&mut cands, family, |c| c.legacy.as_str());
@@ -97,12 +100,13 @@ impl FontDb {
                 }
             };
             let best = cands.into_iter().min_by(|a, b| score(a).total_cmp(&score(b)))?;
-            (best.path.clone(), best.family.clone(), best.style.clone())
+            (best.path.clone(), best.family.clone(), best.style.clone(), best.legacy.clone())
         };
         let data = Arc::new(read_fallback_file(&path)?);
+        // The face chosen, also in a collection holding another face of that family and style.
         let found = enumerate_faces(&data, MAX_FILE_FACES)
             .into_iter()
-            .find(|f| f.family.eq_ignore_ascii_case(&fam) && f.style.eq_ignore_ascii_case(&style))?;
+            .find(|f| f.family.eq_ignore_ascii_case(&fam) && f.style.eq_ignore_ascii_case(&style) && f.legacy.eq_ignore_ascii_case(&legacy))?;
         let mut face = make_face(FontBytes::Owned(data), found.index, found.family, found.style, found.legacy, found.coords)?;
         face.local_names = found.local;
         Some(Arc::new(face))

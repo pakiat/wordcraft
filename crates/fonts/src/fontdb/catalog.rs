@@ -1,6 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::Ordering;
 use super::face::{FontBytes, FontFace};
+use super::lookup::owns_name;
 #[cfg(not(target_arch = "wasm32"))]
 use super::names::{CatalogEntry, file_face_names, style_italic, style_weight};
 use super::names::{LocalName, MAX_FAMILY_NAME, MAX_FILE_FACES, enumerate_faces, make_face, name_language_matches};
@@ -110,18 +111,29 @@ impl FontDb {
         let mut v: Vec<(bool, f32, String)> = Vec::new();
         for legacy in [false, true] {
             let named = |typographic: &str, legacy_name: &str| (if legacy { legacy_name } else { typographic }).eq_ignore_ascii_case(family);
-            v.extend(
-                self.read_faces()
-                    .iter()
-                    .filter(|f| named(&f.family, &f.legacy_family) && !f.style.contains('{'))
-                    .map(|f| (f.italic, f.weight, f.style.clone())),
-            );
+            // (italic, weight, style, legacy family name) of the loaded faces, then the cataloged.
+            let mut found: Vec<(bool, f32, String, String)> = self
+                .read_faces()
+                .iter()
+                .filter(|f| named(&f.family, &f.legacy_family) && !f.style.contains('{'))
+                .map(|f| (f.italic, f.weight, f.style.clone(), f.legacy_family.clone()))
+                .collect();
             #[cfg(not(target_arch = "wasm32"))]
             for c in self.read_catalog().iter() {
-                if named(&c.family, &c.legacy) && !v.iter().any(|(_, _, s)| s.eq_ignore_ascii_case(&c.style)) {
-                    v.push((style_italic(&c.style), style_weight(&c.style), c.style.clone()));
+                if named(&c.family, &c.legacy)
+                    && !found.iter().any(|(_, _, s, l)| s.eq_ignore_ascii_case(&c.style) && l.eq_ignore_ascii_case(&c.legacy))
+                {
+                    found.push((style_italic(&c.style), style_weight(&c.style), c.style.clone(), c.legacy.clone()));
                 }
             }
+            // The styles `face` chooses among: a face claiming the family by its typographic name
+            // only (TH SarabunIT๙ for TH SarabunPSK) offers none when the family has its own.
+            if !legacy && found.iter().any(|t| owns_name(&t.3, family)) {
+                found.retain(|t| owns_name(&t.3, family));
+            }
+            // Each style once, though two families' faces can share one.
+            let mut seen = std::collections::HashSet::new();
+            v.extend(found.into_iter().filter(|t| seen.insert(t.2.to_ascii_lowercase())).map(|(i, w, s, _)| (i, w, s)));
             if !v.is_empty() {
                 break;
             }
