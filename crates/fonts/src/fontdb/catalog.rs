@@ -278,7 +278,8 @@ impl FontDb {
             if tried.0 != generation {
                 *tried = (generation, std::collections::HashSet::new());
             }
-            if !tried.1.insert(family.to_lowercase()) {
+            // ASCII case only, as the catalog compares names: "Семья" and "семья" are two families.
+            if !tried.1.insert(family.to_ascii_lowercase()) {
                 return false;
             }
         }

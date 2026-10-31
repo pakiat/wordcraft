@@ -123,31 +123,55 @@ impl FontDb {
     }
 
     /// The installed `family`'s face closest to Regular, read from its file into a face the
-    /// database doesn't keep (see [`FontDb::preview_face`]).
+    /// database doesn't keep (see [`FontDb::preview_face`]). The family's own face first; when its
+    /// file can't be read, a face claiming the family's name (see `keep_own_faces`), as
+    /// [`FontDb::face`] then uses it.
     #[cfg(not(target_arch = "wasm32"))]
     fn unshared_face(&self, family: &str) -> Option<Arc<FontFace>> {
-        let (path, fam, style, legacy) = {
-            let cat = self.read_catalog();
-            let mut cands: Vec<&CatalogEntry> = cat.iter().filter(|c| c.family.eq_ignore_ascii_case(family)).collect();
-            keep_own_faces(&mut cands, family, |c| c.legacy.as_str());
-            if cands.is_empty() {
-                cands = cat.iter().filter(|c| c.legacy.eq_ignore_ascii_case(family)).collect();
-            }
-            let score = |c: &CatalogEntry| {
-                if matches!(norm(&c.style).as_str(), "regular" | "normal" | "book" | "roman") {
-                    -1.0
-                } else {
-                    (style_weight(&c.style) - 400.0).abs() + if style_italic(&c.style) { 1000.0 } else { 0.0 }
-                }
-            };
-            let best = cands.into_iter().min_by(|a, b| score(a).total_cmp(&score(b)))?;
-            (best.path.clone(), best.family.clone(), best.style.clone(), best.legacy.clone())
+        self.unshared_picks(family).into_iter().find_map(|(path, fam, style, legacy)| Self::read_unshared(&path, &fam, &style, &legacy))
+    }
+
+    /// The cataloged faces [`FontDb::unshared_face`] tries for `family`, in order, as (path,
+    /// family, style, legacy family): the one closest to Regular among the family's own faces,
+    /// then among the faces claiming its name when it has both; or among the faces of that legacy
+    /// family name.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn unshared_picks(&self, family: &str) -> Vec<(std::path::PathBuf, String, String, String)> {
+        let cat = self.read_catalog();
+        let named: Vec<&CatalogEntry> = cat.iter().filter(|c| c.family.eq_ignore_ascii_case(family)).collect();
+        let mut own = named.clone();
+        keep_own_faces(&mut own, family, |c| c.legacy.as_str());
+        let groups: Vec<Vec<&CatalogEntry>> = if own.is_empty() {
+            vec![cat.iter().filter(|c| c.legacy.eq_ignore_ascii_case(family)).collect()]
+        } else if own.len() < named.len() {
+            let claimants = named.into_iter().filter(|c| !owns_name(&c.legacy, family)).collect();
+            vec![own, claimants]
+        } else {
+            vec![own]
         };
-        let data = Arc::new(read_fallback_file(&path)?);
+        let score = |c: &CatalogEntry| {
+            if matches!(norm(&c.style).as_str(), "regular" | "normal" | "book" | "roman") {
+                -1.0
+            } else {
+                (style_weight(&c.style) - 400.0).abs() + if style_italic(&c.style) { 1000.0 } else { 0.0 }
+            }
+        };
+        groups
+            .into_iter()
+            .filter_map(|g| g.into_iter().min_by(|a, b| score(a).total_cmp(&score(b))))
+            .map(|c| (c.path.clone(), c.family.clone(), c.style.clone(), c.legacy.clone()))
+            .collect()
+    }
+
+    /// The face of the font file at `path` with that family, style and legacy family name, read
+    /// into a face the database doesn't keep. `None` when the file can't be read or lacks it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_unshared(path: &std::path::Path, fam: &str, style: &str, legacy: &str) -> Option<Arc<FontFace>> {
+        let data = Arc::new(read_fallback_file(path)?);
         // The face chosen, also in a collection holding another face of that family and style.
         let found = enumerate_faces(&data, MAX_FILE_FACES)
             .into_iter()
-            .find(|f| f.family.eq_ignore_ascii_case(&fam) && f.style.eq_ignore_ascii_case(&style) && f.legacy.eq_ignore_ascii_case(&legacy))?;
+            .find(|f| f.family.eq_ignore_ascii_case(fam) && f.style.eq_ignore_ascii_case(style) && f.legacy.eq_ignore_ascii_case(legacy))?;
         let mut face = make_face(FontBytes::Owned(data), found.index, found.family, found.style, found.legacy, found.coords)?;
         face.local_names = found.local;
         Some(Arc::new(face))

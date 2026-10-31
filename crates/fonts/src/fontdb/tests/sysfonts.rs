@@ -109,6 +109,53 @@ fn an_installed_family_is_not_hidden_by_a_loaded_face_claiming_its_name() {
 }
 
 #[test]
+fn the_preview_falls_back_to_a_claimant_when_the_installed_family_cannot_be_read() {
+    // The font list preview tries the family's own installed face first, then a face claiming
+    // the family's name, so an unreadable own file doesn't leave the family without a preview
+    // when `face` would still draw it in the claimant.
+    use crate::fontdb::names::CatalogEntry;
+    let db = FontDb::with_font_dirs(vec![]);
+    db.load_system_fonts();
+    let entry = |style: &str, legacy: &str, path: &str| CatalogEntry {
+        family: FAMILY.into(),
+        style: style.into(),
+        legacy: legacy.into(),
+        full_name: None,
+        postscript: None,
+        local: Vec::new(),
+        east_asian: false,
+        path: path.into(),
+    };
+    let paths = |db: &FontDb| db.unshared_picks(FAMILY).into_iter().map(|p| p.0).collect::<Vec<PathBuf>>();
+    db.catalog.write().unwrap().extend([
+        entry("Regular", "Sysfont Other", "claimant.ttf"),
+        entry("Bold", FAMILY, "own-bold.ttf"),
+        entry("Regular", FAMILY, "own.ttf"),
+    ]);
+    assert_eq!(paths(&db), [PathBuf::from("own.ttf"), PathBuf::from("claimant.ttf")]);
+    // A family with no face of its own: the claimant only.
+    db.catalog.write().unwrap().retain(|c| c.legacy != FAMILY);
+    assert_eq!(paths(&db), [PathBuf::from("claimant.ttf")]);
+    // Neither file exists: no preview, rather than a face the family isn't drawn in.
+    assert!(db.preview_face(FAMILY).is_none());
+}
+
+#[test]
+fn a_family_tried_over_a_claimant_is_told_apart_from_one_differing_only_in_non_ascii_case() {
+    // The catalog compares names by ASCII case only, so "Семья" and "семья" are two families:
+    // trying one's installed faces doesn't count as trying the other's.
+    let db = FontDb::with_font_dirs(vec![]);
+    db.load_system_fonts();
+    db.load_cataloged_owner("Семья");
+    db.load_cataloged_owner("семья");
+    db.load_cataloged_owner("СЕМЬЯ");
+    assert_eq!(db.owner_tried.lock().unwrap().1.len(), 3);
+    db.load_cataloged_owner("Sysfont SANS3");
+    db.load_cataloged_owner("sysfont sans3");
+    assert_eq!(db.owner_tried.lock().unwrap().1.len(), 4, "ASCII case is one family");
+}
+
+#[test]
 fn a_claimant_found_before_another_lookup_loaded_the_family_gives_way_to_it() {
     // A lookup found the claimant, then another thread loaded the family's own faces before this
     // one could: loading adds nothing now, and the family's own face is still chosen.
