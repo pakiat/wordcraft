@@ -109,6 +109,31 @@ fn an_installed_family_is_not_hidden_by_a_loaded_face_claiming_its_name() {
 }
 
 #[test]
+fn a_claimant_hides_the_installed_family_neither_by_localized_name_nor_in_the_preview() {
+    let dir = font_dir("claimant-local");
+    let claimant = || {
+        let mut f = make_face(FontBytes::Static(BUNDLED[0]), 0, FAMILY.into(), "Regular".into(), "Sysfont Other".into(), Vec::new()).unwrap();
+        f.local_names = vec![LocalName { lang: "th".into(), name: "ทดสอบ".into(), english: FAMILY.into() }];
+        Arc::new(f)
+    };
+    // The family's localized name finds the installed family's own face, not the claimant.
+    let db = FontDb::with_font_dirs(vec![dir.clone()]);
+    let c = claimant();
+    db.faces.write().unwrap().push(c.clone());
+    let f = db.face("ทดสอบ", "Regular");
+    assert_ne!(f.id(), c.id());
+    assert_eq!(f.legacy_family, FAMILY);
+    // The font list previews the face `face` would choose, without loading the family.
+    let db = FontDb::with_font_dirs(vec![dir]);
+    let c = claimant();
+    db.faces.write().unwrap().push(c.clone());
+    let p = db.preview_face(FAMILY).unwrap();
+    assert_ne!(p.id(), c.id());
+    assert_eq!(p.legacy_family, FAMILY);
+    assert!(db.read_faces().iter().all(|f| f.id() == c.id() || f.family != FAMILY), "the preview loads nothing");
+}
+
+#[test]
 fn the_scan_reads_collections_and_loads_fonts_only_when_used() {
     let dir = font_dir("collection");
     std::fs::remove_file(dir.join("Sysfont-Regular.ttf")).unwrap();

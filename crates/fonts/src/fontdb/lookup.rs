@@ -24,24 +24,53 @@ pub(super) fn owns_name(legacy: &str, family: &str) -> bool {
     legacy.get(..family.len()).is_some_and(|p| p.eq_ignore_ascii_case(family)) && legacy[family.len()..].chars().next().is_none_or(|c| c == ' ')
 }
 
+/// Is `f`, found for `family`, a face claiming the family only by its typographic name (see
+/// `keep_own_faces`)?
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn is_claimant(f: &FontFace, family: &str) -> bool {
+    f.family.eq_ignore_ascii_case(family) && !owns_name(&f.legacy_family, family)
+}
+
 impl FontDb {
+    /// `f`, found for `family` and `style`, unless it is a loaded claimant (see `keep_own_faces`,
+    /// e.g. a user font) and the family's own faces are installed: they load and the face chosen
+    /// among them is returned instead.
+    fn owner_over_claimant(&self, family: &str, style: &str, f: Arc<FontFace>) -> Arc<FontFace> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_claimant(&f, family)
+            && self.load_cataloged_owner(family)
+            && let Some(own) = self.find(family, style)
+        {
+            return own;
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = (family, style);
+        f
+    }
+
+    /// [`FontDb::preview_face`]'s `f` for `family`, unless it is a loaded claimant and the
+    /// family's own faces are installed: then their preview face, read without loading them, so
+    /// the list shows the face [`FontDb::face`] would choose.
+    fn preview_owner_over_claimant(&self, family: &str, f: Arc<FontFace>) -> Arc<FontFace> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_claimant(&f, family)
+            && self.catalog_has_owner(family)
+            && let Some(own) = self.unshared_face(family)
+        {
+            return own;
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = family;
+        f
+    }
+
     /// Resolve a family + style to a face, falling back to the closest style of the family, then to
     /// Source Sans 3 Regular. `family` is a typographic family ("Roboto") or a face's legacy family
     /// name ("Roboto Light", whose styles are Light and Light Italic). Installed system fonts are
     /// found by name whatever ran before. An exact full or PostScript name selects its face.
     pub fn face(&self, family: &str, style: &str) -> Arc<FontFace> {
         if let Some(f) = self.find(family, style) {
-            // A loaded claimant (see `keep_own_faces`, e.g. a user font) doesn't hide the family's
-            // own installed faces: they load and are chosen instead.
-            #[cfg(not(target_arch = "wasm32"))]
-            if f.family.eq_ignore_ascii_case(family)
-                && !owns_name(&f.legacy_family, family)
-                && self.load_cataloged_owner(family)
-                && let Some(own) = self.find(family, style)
-            {
-                return own;
-            }
-            return f;
+            return self.owner_over_claimant(family, style, f);
         }
         // Look again even when this load added nothing: another thread may have just loaded it.
         #[cfg(not(target_arch = "wasm32"))]
@@ -54,7 +83,7 @@ impl FontDb {
         // A localized family name (宋体 → SimSun).
         if let Some(en) = self.english_family(family).filter(|en| !en.eq_ignore_ascii_case(family)) {
             if let Some(f) = self.find(&en, style) {
-                return f;
+                return self.owner_over_claimant(&en, style, f);
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -78,11 +107,11 @@ impl FontDb {
     /// file is too large to read just for a preview.
     pub fn preview_face(&self, family: &str) -> Option<Arc<FontFace>> {
         if let Some(f) = self.find(family, "Regular") {
-            return Some(f);
+            return Some(self.preview_owner_over_claimant(family, f));
         }
         let english = self.english_family(family).filter(|en| !en.eq_ignore_ascii_case(family));
-        if let Some(f) = english.as_deref().and_then(|en| self.find(en, "Regular")) {
-            return Some(f);
+        if let Some((en, f)) = english.as_deref().and_then(|en| self.find(en, "Regular").map(|f| (en, f))) {
+            return Some(self.preview_owner_over_claimant(en, f));
         }
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(f) = self.unshared_face(family).or_else(|| english.as_deref().and_then(|en| self.unshared_face(en))) {

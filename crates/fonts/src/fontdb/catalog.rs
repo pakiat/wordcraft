@@ -281,6 +281,12 @@ impl FontDb {
         !paths.is_empty() && self.load_paths(paths)
     }
 
+    /// Are any of `family`'s own faces (see `keep_own_faces`) installed?
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn catalog_has_owner(&self, family: &str) -> bool {
+        self.read_catalog().iter().any(|c| c.family.eq_ignore_ascii_case(family) && owns_name(&c.legacy, family))
+    }
+
     /// Load the font files at `paths` (see [`FontDb::add_fonts`]). Returns whether any face was added.
     #[cfg(not(target_arch = "wasm32"))]
     fn load_paths(&self, paths: Vec<std::path::PathBuf>) -> bool {
