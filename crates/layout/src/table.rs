@@ -318,12 +318,18 @@ pub fn autofit_widths(cols: &[(f32, f32)], avail: f32) -> Vec<f32> {
 pub(crate) fn first_cell_left_inset(ctx: &Ctx, t: &Table) -> f32 {
     let style = table_style(ctx, t);
     let tborders = table_borders(t, style.as_ref());
-    side_inset(first_cell_left_margin_in(t, default_margins(t, style.as_ref())), first_cell_left_border(t, &tborders))
+    side_inset(first_cell_left_margin_in(t, default_margins(t, style.as_ref())), first_row_borders(t, style.as_ref(), &tborders).0)
 }
 
-/// The first cell's left border: its own, else the table's.
-fn first_cell_left_border(t: &Table, tborders: &Borders) -> Option<Border> {
-    t.rows.first().and_then(|r| r.cells.first()).and_then(|c| c.props.borders.and_then(|b| b.left)).or(tborders.left)
+/// The first row's outer borders as its cells resolve them ([`side_borders`]: own, row exception,
+/// table style, table): its first cell's start border, its last cell's start border and its last
+/// cell's end border.
+fn first_row_borders(t: &Table, style: Option<&TableStyleProps>, tborders: &Borders) -> (Option<Border>, Option<Border>, Option<Border>) {
+    let ncols = grid_cols(t).max(1);
+    let last = t.rows.first().map_or(0, |r| r.cells.len().saturating_sub(1));
+    let (first_start, _) = cell_sides(t, style, tborders, (0, 0), ncols);
+    let (last_start, last_end) = cell_sides(t, style, tborders, (0, last), ncols);
+    (first_start, last_start, last_end)
 }
 
 fn first_cell_left_margin_in(t: &Table, def: [f32; 4]) -> f32 {
@@ -553,25 +559,16 @@ fn table_frame(ctx: &mut Ctx, t: &Table, avail: f32, depth: usize, style: Option
     // (left) margin and border are on its right.
     let rtl = t.props.bidi_visual;
     // How far in from the start margin the table's edge sits when it is start-aligned.
-    let border = first_cell_left_border(t, &tborders);
+    let (border, last_start, last_end) = first_row_borders(t, style, &tborders);
     let start_offset = if ctx.doc.settings.compat_mode >= 15 {
         // The border is centred on the edge, so half of it sits outside: Word moves the table in
         // by that half. A right-to-left table moves in by half its last cell's start border too
         // (measured in Word for Windows: a one-column table, by its start border's whole width).
-        let last_start = match t.rows.first() {
-            Some(r) if rtl && r.cells.len() > 1 => r.cells.last().and_then(|c| c.props.borders.and_then(|b| b.left)).or(tborders.inside_v),
-            _ if rtl => border,
-            _ => None,
-        };
-        indent + half_border(border) + half_border(last_start)
+        indent + half_border(border) + if rtl { half_border(last_start) } else { 0.0 }
     } else {
         indent - side_inset(first_cell_left_margin_in(t, margins_def), border)
     };
-    let end_offset = if ctx.doc.settings.compat_mode >= 15 {
-        half_border(t.rows.first().and_then(|r| r.cells.last()).and_then(|c| c.props.borders.and_then(|b| b.right)).or(tborders.right))
-    } else {
-        0.0
-    };
+    let end_offset = if ctx.doc.settings.compat_mode >= 15 { half_border(last_end) } else { 0.0 };
     let x = match (t.props.align, rtl) {
         (Some(Align::Center), _) => (avail - total) / 2.0,
         // End alignment: the right margin, or the left one in a right-to-left table. From Word

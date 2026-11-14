@@ -6411,6 +6411,25 @@ fn a_cells_text_insets_count_the_borders_painted_on_its_edges() {
     // border's centre half its width in from the margin and the text its inset further.
     let got = lay_out(14, false, 0.5, (None, None), None);
     assert!(near(got[0].0.x + got[0].1, 72.0), "Word 2010: the text at {}", got[0].0.x + got[0].1);
+    // The first cell's border as it resolves it: here from its row's exceptions (`w:tblPrEx`).
+    let exception = |mode: u32| {
+        let mut d = Document::from_text("");
+        d.settings.compat_mode = mode;
+        let mut t = Table::new(1, 2, 200.0);
+        t.props.cell_margins = Some([0.0, 0.75, 0.0, 0.75]);
+        let b = single(0.5);
+        t.props.borders =
+            Some(wordcraft_doc::props::Borders { top: Some(b), left: Some(b), bottom: Some(b), right: Some(b), between: Some(b), inside_v: Some(b) });
+        let mut ex = t.rows[0].props.exceptions.clone().unwrap_or_default();
+        ex.borders = Some(wordcraft_doc::props::Borders { left: Some(single(6.0)), ..Default::default() });
+        t.rows[0].props.exceptions = Some(ex);
+        t.rows[0].cells[0].blocks = vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("one", Default::default()))];
+        d.body = vec![std::sync::Arc::new(wordcraft_doc::Block::Table(t))];
+        let l = lay(&d);
+        l.pages[0].items.iter().find_map(|it| if let Placed::Lines { x, .. } = it { Some(*x) } else { None }).unwrap()
+    };
+    assert!(near(exception(14), 72.0), "Word 2010, a row exception's 6 pt border: the text at {}", exception(14));
+    assert!(near(exception(15), 78.0), "Word 2013, a row exception's 6 pt border: the text at {}", exception(15));
     let thick = |mode| {
         let mut d = Document::from_text("");
         d.settings.compat_mode = mode;
