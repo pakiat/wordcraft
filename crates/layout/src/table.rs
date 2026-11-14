@@ -576,7 +576,7 @@ fn table_frame(ctx: &mut Ctx, t: &Table, avail: f32, depth: usize, style: Option
     let tborders = table_borders(t, style);
     // A right-to-left table (`w:bidiVisual`) mirrors: its first column stands at the right, its
     // start alignment and indent are measured from the right margin, and each cell's start
-    // (left) margin and border are on its right.
+    // (left) border is drawn on its right. Its text insets aren't mirrored ([`text_insets`]).
     let rtl = t.props.bidi_visual;
     // How far in from the start margin the table's edge sits when it is start-aligned.
     let (border, last_start, last_end) = first_row_borders(t, style, &tborders);
@@ -636,8 +636,8 @@ pub fn layout_table(ctx: &mut Ctx, story: StoryRef, t: &Table, path: &[u32], ava
             let span = cell.span();
             let x0 = colx.get(g).copied().unwrap_or(acc);
             let x1 = colx.get((g + span).min(ncols)).copied().unwrap_or(acc);
-            // Right to left: grid columns run from the right edge, and the start (left) margin
-            // is on the cell's right.
+            // Right to left: grid columns run from the right edge. A cell's text insets stay
+            // where they are, as Word lays them out ([`text_insets`]).
             let (x0, x1) = if rtl { ((acc - x1).max(0.0), (acc - x0).max(0.0)) } else { (x0, x1) };
             let m = cell.props.resolved_margins(margins_def);
             let region = region_of(t, style.as_ref(), ri, g, span, ncols);
