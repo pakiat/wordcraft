@@ -6309,20 +6309,26 @@ fn a_cells_text_stays_clear_of_a_side_border_wider_than_twice_its_margin() {
     near(inset(14, 6.0, 0.75), (3.0, 3.0), "Word 2010 too");
 }
 
-/// Measured in Word for Windows: on an edge two cells share, the text of the cell on its left
-/// keeps clear of the wider of the two borders, the text of the cell on its right of its own
-/// border only. In Word 2010 documents the cells keep clear of their borders in the same way, and
-/// the first cell's text stays at the margin.
+/// Measured in Word for Windows (two-column tables, 0.5 pt outer borders, 0.75 pt margins): a
+/// cell's text starts its margin, or half its own start border where that is wider, in from its
+/// left edge, and is as wide as the cell less both margins or less half the border painted on each
+/// edge, whichever leaves less; on an edge two cells share the wider border is painted. So beside a
+/// wider neighbour's border a cell's text starts where it would anyway (under that border, as Word
+/// draws it) and ends sooner. In a right-to-left table the insets aren't mirrored, and the table
+/// stands in from the right margin by half its first and last cells' start borders. Word 2010
+/// documents keep the same insets, the first cell's text at the margin.
 #[test]
-fn a_shared_edge_keeps_the_left_cells_text_clear_of_the_wider_border() {
+fn a_cells_text_insets_count_the_borders_painted_on_its_edges() {
     crate::test_fonts();
     let single = |width: f32| Border { style: wordcraft_doc::props::BorderStyle::Single, width, color: None, space: 0.0 };
-    // A two-cell table, 0.5 pt borders and 0.75 pt margins, the first cell's own right border
-    // `right` and the second's own left border `left`: where each cell's text starts and ends.
-    let lay_out = |mode: u32, inside: f32, right: Option<f32>, left: Option<f32>| {
+    // A two-cell table, the first cell's own right border `right` and the second's own left border
+    // `left`, the first cell's margins `m0`: each cell's page x of its edge and its text's left
+    // and right insets.
+    let lay_out = |mode: u32, rtl: bool, inside: f32, (right, left): (Option<f32>, Option<f32>), m0: Option<(f32, f32)>| {
         let mut d = Document::from_text("");
         d.settings.compat_mode = mode;
         let mut t = Table::new(1, 2, 200.0);
+        t.props.bidi_visual = rtl;
         t.props.cell_margins = Some([0.0, 0.75, 0.0, 0.75]);
         let (b, iv) = (single(0.5), single(inside));
         t.props.borders = Some(wordcraft_doc::props::Borders {
@@ -6338,6 +6344,9 @@ fn a_shared_edge_keeps_the_left_cells_text_clear_of_the_wider_border() {
         }
         if let Some(w) = left {
             t.rows[0].cells[1].props.borders = Some(wordcraft_doc::props::Borders { left: Some(single(w)), ..Default::default() });
+        }
+        if let Some((l, r)) = m0 {
+            t.rows[0].cells[0].props.partial_margins = Some([None, Some(l), None, Some(r)]);
         }
         for (c, text) in t.rows[0].cells.iter_mut().zip(["one", "two"]) {
             c.blocks = vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(text, Default::default()))];
@@ -6359,32 +6368,49 @@ fn a_shared_edge_keeps_the_left_cells_text_clear_of_the_wider_border() {
                     })
                     .unwrap();
                 let boxed = boxed.unwrap();
-                (text_x, text_x - boxed.x, boxed.w - (text_x - boxed.x) - right)
+                (boxed, text_x - boxed.x, boxed.w - (text_x - boxed.x) - right)
             })
             .collect::<Vec<_>>()
     };
-    let check = |mode: u32, inside: f32, right: Option<f32>, left: Option<f32>, end: f32, start: f32| {
-        let got = lay_out(mode, inside, right, left);
-        let what = format!("mode {mode}, inside {inside}, first cell's right {right:?}, second's left {left:?}");
-        assert!((got[0].2 - end).abs() < 0.01, "{what}: the first cell's text ends {} in, not {end}", got[0].2);
-        assert!((got[1].1 - start).abs() < 0.01, "{what}: the second cell's text starts {} in, not {start}", got[1].1);
-        got
+    let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+    // (the first cell's right border, the second's left), and each cell's (left, right) insets.
+    let check = |mode: u32, inside: f32, borders: (Option<f32>, Option<f32>), want: [(f32, f32); 2]| {
+        let got = lay_out(mode, false, inside, borders, None);
+        for (c, ((_, l, r), (wl, wr))) in got.into_iter().zip(want).enumerate() {
+            assert!(near(l, wl) && near(r, wr), "mode {mode}, inside {inside}, {borders:?}: cell {c} insets {l} and {r}, not {wl} and {wr}");
+        }
     };
     for mode in [15, 14] {
         // The wider border on the left cell's own side, or on its neighbour's.
-        check(mode, 0.5, Some(6.0), Some(0.5), 3.0, 0.75);
-        check(mode, 0.5, Some(0.5), Some(6.0), 3.0, 3.0);
-        check(mode, 0.5, None, Some(6.0), 3.0, 3.0);
-        check(mode, 6.0, Some(0.5), None, 3.0, 3.0);
-        check(mode, 6.0, None, Some(0.5), 3.0, 0.75);
+        check(mode, 0.5, (Some(6.0), Some(0.5)), [(0.75, 2.5), (0.75, 2.5)]);
+        check(mode, 0.5, (Some(0.5), Some(6.0)), [(0.75, 2.5), (3.0, 0.25)]);
+        check(mode, 0.5, (None, Some(6.0)), [(0.75, 2.5), (3.0, 0.25)]);
+        check(mode, 6.0, (Some(0.5), None), [(0.75, 2.5), (3.0, 0.25)]);
+        check(mode, 6.0, (None, Some(0.5)), [(0.75, 2.5), (0.75, 2.5)]);
         // No border of its own: the neighbour's still counts.
-        check(mode, 0.0, Some(0.0), Some(6.0), 3.0, 3.0);
-        check(mode, 0.5, Some(3.0), Some(1.5), 1.5, 0.75);
-        check(mode, 0.5, None, None, 0.75, 0.75);
+        check(mode, 0.0, (Some(0.0), Some(6.0)), [(0.75, 2.5), (3.0, 0.25)]);
+        check(mode, 0.5, (Some(3.0), Some(1.5)), [(0.75, 1.0), (0.75, 1.0)]);
+        check(mode, 0.5, (None, None), [(0.75, 0.75), (0.75, 0.75)]);
     }
+    // Unequal margins (2 and 0.25 pt) and a 6 pt border on the right: the text starts 2 pt in and
+    // the borders take 3.25 pt, so it ends 1.25 pt in.
+    let got = lay_out(15, false, 0.5, (Some(6.0), None), Some((2.0, 0.25)));
+    assert!(near(got[0].1, 2.0) && near(got[0].2, 1.25), "unequal margins: {:?}", (got[0].1, got[0].2));
+    // Right to left, the second (left) cell's start border 6 pt, painted on the edge they share:
+    // the second cell starts its text 3 pt in from its left edge, under the 0.5 pt border there,
+    // and the table stands 3.25 pt in from the right margin.
+    let got = lay_out(15, true, 0.5, (None, Some(6.0)), None);
+    assert!(near(got[0].1, 0.75) && near(got[0].2, 2.5), "right to left, first cell: {:?}", (got[0].1, got[0].2));
+    assert!(near(got[1].1, 3.0) && near(got[1].2, 0.25), "right to left, second cell: {:?}", (got[1].1, got[1].2));
+    assert!(got[1].0.x < got[0].0.x, "the first cell is on the right");
+    assert!(near(got[0].0.x + got[0].0.w, 540.0 - 3.25), "the table's right edge is at {}", got[0].0.x + got[0].0.w);
+    // A cell's own left margin stays on its left in a right-to-left table.
+    let got = lay_out(15, true, 0.5, (None, None), Some((2.0, 0.25)));
+    assert!(near(got[0].1, 2.0) && near(got[0].2, 0.25), "right to left, unequal margins: {:?}", (got[0].1, got[0].2));
     // Word 2010: the first cell's text is at the margin, whatever its border; Word 2013 puts the
     // border's centre half its width in from the margin and the text its inset further.
-    assert!((lay_out(14, 0.5, None, None)[0].0 - 72.0).abs() < 0.01);
+    let got = lay_out(14, false, 0.5, (None, None), None);
+    assert!(near(got[0].0.x + got[0].1, 72.0), "Word 2010: the text at {}", got[0].0.x + got[0].1);
     let thick = |mode| {
         let mut d = Document::from_text("");
         d.settings.compat_mode = mode;
@@ -6398,8 +6424,23 @@ fn a_shared_edge_keeps_the_left_cells_text_clear_of_the_wider_border() {
         let l = lay(&d);
         l.pages[0].items.iter().find_map(|it| if let Placed::Lines { x, .. } = it { Some(*x) } else { None }).unwrap()
     };
-    assert!((thick(14) - 72.0).abs() < 0.01, "Word 2010: {}", thick(14));
-    assert!((thick(15) - 78.0).abs() < 0.01, "Word 2013: {}", thick(15));
+    assert!(near(thick(14), 72.0), "Word 2010: {}", thick(14));
+    assert!(near(thick(15), 78.0), "Word 2013: {}", thick(15));
+    // Right-aligned, from Word 2013 on the right border's centre stands half its width (0.25 pt)
+    // in from the right margin.
+    let right_edge = |mode| {
+        let mut d = Document::from_text("");
+        d.settings.compat_mode = mode;
+        let mut t = Table::new(1, 2, 200.0);
+        t.props.align = Some(Align::Right);
+        let b = single(0.5);
+        t.props.borders =
+            Some(wordcraft_doc::props::Borders { top: Some(b), left: Some(b), bottom: Some(b), right: Some(b), between: Some(b), inside_v: Some(b) });
+        d.body = vec![std::sync::Arc::new(wordcraft_doc::Block::Table(t))];
+        let l = lay(&d);
+        l.pages[0].items.iter().filter_map(|it| if let Placed::Cell { rect, .. } = it { Some(rect.x + rect.w) } else { None }).fold(0.0f32, f32::max)
+    };
+    assert!(near(right_edge(15), 540.0 - 0.25), "Word 2013, right-aligned: {}", right_edge(15));
 }
 
 /// Measured in Word for Windows: AutoFit to Contents makes a column wider by what a thick side
