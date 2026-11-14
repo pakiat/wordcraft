@@ -6259,6 +6259,56 @@ fn cell_margins_are_where_cell_text_starts() {
     }
 }
 
+/// Measured in Word for Windows: from Word 2013 on, a side border wider than twice the cell margin
+/// keeps the cell's text clear of it, on the table's edge and between cells; Word 2010 documents
+/// keep the margin alone.
+#[test]
+fn a_cells_text_stays_clear_of_a_side_border_wider_than_twice_its_margin() {
+    crate::test_fonts();
+    let inset = |mode: u32, width: f32, margin: f32| {
+        let mut d = Document::from_text("");
+        d.settings.compat_mode = mode;
+        let mut t = Table::new(1, 2, 200.0);
+        t.props.cell_margins = Some([0.0, margin, 0.0, margin]);
+        let b = Border { style: wordcraft_doc::props::BorderStyle::Single, width, color: None, space: 0.0 };
+        t.props.borders =
+            Some(wordcraft_doc::props::Borders { top: Some(b), left: Some(b), bottom: Some(b), right: Some(b), between: Some(b), inside_v: Some(b) });
+        for (c, text) in t.rows[0].cells.iter_mut().zip(["one", "two"]) {
+            c.blocks = vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(text, Default::default()))];
+        }
+        d.body = vec![std::sync::Arc::new(wordcraft_doc::Block::Table(t))];
+        let l = lay(&d);
+        let items = &l.pages[0].items;
+        (0..2)
+            .map(|c| {
+                let boxed = items.iter().find_map(|it| match it {
+                    Placed::Cell { rect, cell, .. } if *cell == c => Some(*rect),
+                    _ => None,
+                });
+                let (text_x, right) = items
+                    .iter()
+                    .find_map(|it| match it {
+                        Placed::Lines { path, x, para, .. } if path.0.get(2) == Some(&(c as u32)) => Some((*x, para.lines[0].right)),
+                        _ => None,
+                    })
+                    .unwrap();
+                let boxed = boxed.unwrap();
+                (text_x - boxed.x, boxed.w - (text_x - boxed.x) - right)
+            })
+            .collect::<Vec<_>>()
+    };
+    let near = |got: Vec<(f32, f32)>, want: (f32, f32), what: &str| {
+        for (c, (l, r)) in got.into_iter().enumerate() {
+            assert!((l - want.0).abs() < 0.01 && (r - want.1).abs() < 0.01, "{what}, cell {c}: insets {l} and {r}, not {want:?}");
+        }
+    };
+    near(inset(15, 3.0, 0.75), (1.5, 1.5), "3 pt border, 0.75 pt margins, Word 2013");
+    near(inset(15, 6.0, 0.75), (3.0, 3.0), "6 pt border, Word 2013");
+    near(inset(15, 1.5, 0.75), (0.75, 0.75), "a border twice the margin: the margin");
+    near(inset(15, 6.0, 5.4), (5.4, 5.4), "a margin wider than half the border");
+    near(inset(14, 6.0, 0.75), (0.75, 0.75), "Word 2010: the margin alone");
+}
+
 /// Line count and, per line, how far the text (trailing spaces excluded) reaches.
 fn justified_lines(text: &str, compat_mode: u32, align: Align) -> (usize, Vec<f32>) {
     let mut d = Document::from_text(text);

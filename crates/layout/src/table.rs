@@ -522,8 +522,6 @@ pub fn layout_table(ctx: &mut Ctx, story: StoryRef, t: &Table, path: &[u32], ava
             // is on the cell's right.
             let (x0, x1) = if rtl { ((acc - x1).max(0.0), (acc - x0).max(0.0)) } else { (x0, x1) };
             let m = cell.props.resolved_margins(margins_def);
-            let margins = if rtl { [row_top, m[3], row_bottom, m[1]] } else { [row_top, m[1], row_bottom, m[3]] };
-            let cw = (x1 - x0 - margins[1] - margins[3]).max(4.0);
             let region = region_of(t, style.as_ref(), ri, g, span, ncols);
             // Conditional formatting, later parts winning (ECMA-376 §17.7.6): whole table, column
             // bands, row bands, first/last column, header/total row, corner cells.
@@ -577,6 +575,17 @@ pub fn layout_table(ctx: &mut Ctx, story: StoryRef, t: &Table, path: &[u32], ava
             if rtl {
                 std::mem::swap(&mut borders.left, &mut borders.right);
             }
+            // From Word 2013 on (compatibility mode 15) a cell's text stays clear of a side border
+            // wider than twice the cell margin: it starts and ends at the border's inner edge
+            // (measured in Word for Windows: a 3 pt border with 0.75 pt margins puts the text
+            // 1.5 pt in from the border's centre, a 6 pt one 3 pt, on the table's edge and between
+            // cells alike). Word 2010 documents keep the margin alone.
+            let clear = |b: Option<Border>| {
+                if ctx.doc.settings.compat_mode >= 15 { b.filter(Border::is_visible).map_or(0.0, |b| b.width.clamp(0.0, 12.0) / 2.0) } else { 0.0 }
+            };
+            let (start, end) = if rtl { (m[3], m[1]) } else { (m[1], m[3]) };
+            let margins = [row_top, start.max(clear(borders.left)), row_bottom, end.max(clear(borders.right))];
+            let cw = (x1 - x0 - margins[1] - margins[3]).max(4.0);
             // Word keeps the cell's text clear of its top border (and the last row's of its bottom
             // border): the border's width sits on top of the cell margin.
             let band = |b: Option<Border>| b.filter(Border::is_visible).map_or(0.0, |b| b.width.clamp(0.0, 12.0));
