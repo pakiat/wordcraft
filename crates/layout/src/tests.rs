@@ -6309,6 +6309,29 @@ fn a_cells_text_stays_clear_of_a_side_border_wider_than_twice_its_margin() {
     near(inset(14, 6.0, 0.75), (0.75, 0.75), "Word 2010: the margin alone");
 }
 
+/// Measured in Word for Windows: AutoFit to Contents makes a column wider by what a thick side
+/// border keeps its text clear of (a cell holding one word, 0.75 pt margins: 1.5 pt more with
+/// 3 pt borders, 4.5 pt more with 6 pt ones), so the word still fits on one line.
+#[test]
+fn autofit_counts_what_a_thick_side_border_keeps_clear() {
+    crate::test_fonts();
+    let need = |mode: u32, width: f32| {
+        let mut d = Document::from_text("");
+        d.settings.compat_mode = mode;
+        let mut t = Table::new(1, 1, 100.0);
+        t.props.cell_margins = Some([0.0, 0.75, 0.0, 0.75]);
+        let b = Border { style: wordcraft_doc::props::BorderStyle::Single, width, color: None, space: 0.0 };
+        t.props.borders =
+            Some(wordcraft_doc::props::Borders { top: Some(b), left: Some(b), bottom: Some(b), right: Some(b), between: Some(b), inside_v: Some(b) });
+        t.rows[0].cells[0].blocks = vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("Antidisestablishment", Default::default()))];
+        crate::measure_table_columns(&d, &t)[0].0
+    };
+    let thin = need(15, 1.5);
+    assert!((need(15, 3.0) - thin - 1.5).abs() < 0.01, "3 pt: {} against {thin}", need(15, 3.0));
+    assert!((need(15, 6.0) - thin - 4.5).abs() < 0.01, "6 pt: {} against {thin}", need(15, 6.0));
+    assert!((need(14, 6.0) - need(14, 1.5)).abs() < 0.01, "Word 2010: the margins alone");
+}
+
 /// Line count and, per line, how far the text (trailing spaces excluded) reaches.
 fn justified_lines(text: &str, compat_mode: u32, align: Align) -> (usize, Vec<f32>) {
     let mut d = Document::from_text(text);
@@ -13989,6 +14012,10 @@ fn banner_layout(width: SpanWidth) -> DocLayout {
         SpanWidth::Automatic | SpanWidth::TextOnly => None,
     };
     t.props.cell_margins = Some([0.0; 4]);
+    // No borders (no Table Grid): with zero margins half a border would keep each cell's text clear of it
+    // (`autofit_counts_what_a_thick_side_border_keeps_clear`), and these tests are about how the
+    // spanning cell's width is shared.
+    t.props.style = None;
     t.rows[0].cells.truncate(1);
     t.rows[0].cells[0].props.span = 4;
     t.rows[0].cells[0].props.width = t.props.width;
